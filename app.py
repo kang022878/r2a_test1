@@ -686,21 +686,25 @@ async def stylize_auto(
         negative = "text, watermark"
 
     t_gen0 = time.perf_counter()
-    try:
-        out_pil = pipe(
-            prompt=prompt,
-            negative_prompt=negative,
-            image=bgr_to_pil(masked_crop),
-            strength=float(STRENGTH),
-            guidance_scale=float(CFG),
-            num_inference_steps=int(STEPS),
-            num_images_per_prompt=1,
-            generator=g,
-        ).images[0]
-        styl_crop_bgr = cv2.cvtColor(np.array(out_pil.convert("RGB")), cv2.COLOR_RGB2BGR)
-    except RuntimeError:
+    if style in ("pixel", "toon"):
         styl_crop_bgr = fallback_stylize(masked_crop, style)
-    t_gen1 = time.perf_counter()
+        t_gen1 = time.perf_counter()
+    else:
+        try:
+            out_pil = pipe(
+                prompt=prompt,
+                negative_prompt=negative,
+                image=bgr_to_pil(masked_crop),
+                strength=float(STRENGTH),
+                guidance_scale=float(CFG),
+                num_inference_steps=int(STEPS),
+                num_images_per_prompt=1,
+                generator=g,
+            ).images[0]
+            styl_crop_bgr = cv2.cvtColor(np.array(out_pil.convert("RGB")), cv2.COLOR_RGB2BGR)
+        except RuntimeError:
+            styl_crop_bgr = fallback_stylize(masked_crop, style)
+        t_gen1 = time.perf_counter()
     styl_crop_bgr = stabilize_stylized(track.stylized_crop, styl_crop_bgr, mask_crop_u8, STABILIZE_ALPHA)
     track.stylized_crop = styl_crop_bgr
 
