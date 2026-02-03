@@ -1,0 +1,36 @@
+Metadata-Version: 2.4
+Name: image2mesh
+Version: 0.1.0
+Summary: Crop PNG (alpha) -> TripoSR -> glb/obj export pipeline.
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi>=0.110
+Requires-Dist: uvicorn>=0.27
+Requires-Dist: pillow>=10.0
+Requires-Dist: numpy>=1.24
+Requires-Dist: python-multipart>=0.0.9
+Requires-Dist: opencv-python>=4.8; platform_system != "Darwin"
+Provides-Extra: server
+Requires-Dist: uvicorn>=0.27; extra == "server"
+
+# image2mesh
+
+Pipeline: crop PNG (with alpha) -> 3D reconstruction (TripoSR) -> export (glb/obj).
+
+## Quick start
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .
+# plus TripoSR deps
+pip install -r vendor/TripoSR/requirements.txt
+```
+
+Run the FastAPI server (optional):
+```bash
+uvicorn image2mesh.server:app --reload
+```
+
+## Notes
+- TripoSR is used as a subprocess wrapper via `vendor/TripoSR/run.py` to reduce breakage across versions.
+- Outputs are written under `outputs/<job_id>/`.

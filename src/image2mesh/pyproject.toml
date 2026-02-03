@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "image2mesh"
+version = "0.1.0"
+description = "Crop PNG (alpha) -> TripoSR -> glb/obj export pipeline."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn>=0.27",
+  "pillow>=10.0",
+  "numpy>=1.24",
+  "python-multipart>=0.0.9",
+  "opencv-python>=4.8; platform_system != 'Darwin'", # optional on mac if not needed
+]
+
+[project.optional-dependencies]
+server = ["uvicorn>=0.27"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

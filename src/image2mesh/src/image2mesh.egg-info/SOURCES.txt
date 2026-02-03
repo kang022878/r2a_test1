@@ -1,0 +1,12 @@
+README.md
+pyproject.toml
+src/image2mesh/__init__.py
+src/image2mesh/export.py
+src/image2mesh/pipeline.py
+src/image2mesh/preprocess.py
+src/image2mesh/server.py
+src/image2mesh.egg-info/PKG-INFO
+src/image2mesh.egg-info/SOURCES.txt
+src/image2mesh.egg-info/dependency_links.txt
+src/image2mesh.egg-info/requires.txt
+src/image2mesh.egg-info/top_level.txt

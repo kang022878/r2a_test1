@@ -5,17 +5,20 @@ import socket
 import time
 from dataclasses import dataclass
 from typing import Optional
+from pathlib import Path
 
 import cv2
 import numpy as np
 from PIL import Image
 
 import torch
-from fastapi import FastAPI, UploadFile, File, Form
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from ultralytics import YOLO
 from diffusers import StableDiffusionXLImg2ImgPipeline
 
+from image2mesh.pipeline import run_pipeline, PipelineConfig
+from image2mesh.export import package_obj
 YOLO_MODEL = "yolov8n-seg.pt"
 SDXL_TURBO_MODEL = "stabilityai/sdxl-turbo"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -174,6 +177,7 @@ class Track:
     bbox: tuple
     last_seen: float
     stylized_crop: np.ndarray
+    last_mask_crop: Optional[np.ndarray]
     seed: int
 
 TRACKS = []
@@ -258,6 +262,7 @@ INDEX_HTML = r"""
     </select>
     <button id="start">Start</button>
     <button id="stop">Stop</button>
+    <button id="export3d">Export 3D</button>
   </div>
 </div>
 
@@ -266,6 +271,7 @@ const video = document.getElementById('video');
 const overlay = document.getElementById('overlay');
 const statusEl = document.getElementById('status');
 const styleSel = document.getElementById('style');
+const exportBtn = document.getElementById('export3d');
 
 const canvas = document.createElement('canvas');
 const ctx = canvas.getContext('2d');
@@ -401,6 +407,40 @@ document.getElementById('start').onclick = () => {
 document.getElementById('stop').onclick = () => {
   running = false;
   setStatus("Stopped");
+};
+
+exportBtn.onclick = async () => {
+  if (selectedId === null) {
+    setStatus("Select an object first");
+    return;
+  }
+  exportBtn.disabled = true;
+  setStatus("Exporting 3D...");
+  try {
+    const fd = new FormData();
+    fd.append('selected_id', String(selectedId));
+    fd.append('format', 'obj');
+    const res = await fetch('/export_3d', { method: 'POST', body: fd });
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(`HTTP ${res.status}: ${txt.slice(0, 200)}`);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'model_obj.zip';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    setStatus("Exported 3D");
+  } catch (e) {
+    console.error(e);
+    setStatus("Export error: " + e);
+  } finally {
+    exportBtn.disabled = false;
+  }
 };
 
 setupCamera().catch(e => setStatus("Camera error: " + e));
@@ -549,6 +589,7 @@ async def stylize_auto(
                     bbox=(bx1, by1, bx2, by2),
                     last_seen=now_ts,
                     stylized_crop=None,
+                    last_mask_crop=None,
                     seed=SEED + NEXT_TRACK_ID,
                 )
                 NEXT_TRACK_ID += 1
@@ -691,6 +732,7 @@ async def stylize_auto(
             bbox=(x1, y1, x2, y2),
             last_seen=now_ts,
             stylized_crop=None,
+            last_mask_crop=None,
             seed=SEED + NEXT_TRACK_ID,
         )
         NEXT_TRACK_ID += 1
@@ -729,6 +771,7 @@ async def stylize_auto(
         t_gen1 = time.perf_counter()
     styl_crop_bgr = stabilize_stylized(track.stylized_crop, styl_crop_bgr, mask_crop_u8, STABILIZE_ALPHA)
     track.stylized_crop = styl_crop_bgr
+    track.last_mask_crop = mask_crop_u8
 
     pasted = paste_back(bgr, styl_crop_bgr, info)
     blended = alpha_blend(bgr, pasted, mask_full, alpha=float(blend_alpha))
@@ -754,3 +797,28 @@ async def stylize_auto(
             "jpeg": round((t_jpg - t_gen1) * 1000, 1),
         },
     })
+
+
+@app.post("/export_3d")
+async def export_3d(
+    selected_id: int = Form(...),
+    format: str = Form("obj"),
+):
+    track = next((t for t in TRACKS if t.track_id == selected_id), None)
+    if track is None or track.stylized_crop is None:
+        raise HTTPException(status_code=404, detail="No stylized crop for selected track")
+
+    styl_bgr = track.stylized_crop
+    mask_u8 = track.last_mask_crop
+
+    cfg = PipelineConfig(bake_texture=False)
+    output_dir, _ = run_pipeline(image=bgr_to_pil(styl_bgr), mask=mask_u8, cfg=cfg)
+
+    if format == "obj":
+        zip_path = package_obj(output_dir)
+        return FileResponse(zip_path, media_type="application/zip", filename=zip_path.name)
+
+    glb_files = list(Path(output_dir).rglob("*.glb"))
+    if not glb_files:
+        raise HTTPException(status_code=404, detail="GLB not found")
+    return FileResponse(glb_files[0], media_type="model/gltf-binary", filename=glb_files[0].name)

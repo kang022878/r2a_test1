@@ -1,0 +1,7 @@
+mc_resolution: 256
+bake_texture: true
+device: cuda
+input_size: 768
+model_save_format: obj
+foreground_ratio: 0.85
+output_dir: outputs
