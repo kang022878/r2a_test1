@@ -1,0 +1,15 @@
+# Web framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+
+# Image & vision
+opencv-python>=4.8.0
+numpy>=1.24.0
+Pillow>=10.0.0
+
+# Deep learning
+torch>=2.1.0
+ultralytics>=8.0.0
+diffusers>=0.25.0
+transformers>=4.36.0
+accelerate>=0.25.0
