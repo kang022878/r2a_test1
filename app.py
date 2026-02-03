@@ -145,6 +145,32 @@ def fallback_stylize(img_bgr: np.ndarray, style: str) -> np.ndarray:
         return pixelate_bgr(img_bgr, scale=0.12)
     return toon_bgr(img_bgr)
 
+def crop_to_mask(img_bgr: np.ndarray, mask_u8: np.ndarray, margin: int = 4):
+    if mask_u8 is None:
+        return img_bgr, mask_u8
+    if mask_u8.shape[:2] != img_bgr.shape[:2]:
+        mask_u8 = cv2.resize(mask_u8, (img_bgr.shape[1], img_bgr.shape[0]), interpolation=cv2.INTER_NEAREST)
+    ys, xs = np.where(mask_u8 > 127)
+    if len(xs) == 0 or len(ys) == 0:
+        return img_bgr, mask_u8
+    x1 = max(int(xs.min()) - margin, 0)
+    y1 = max(int(ys.min()) - margin, 0)
+    x2 = min(int(xs.max()) + margin + 1, img_bgr.shape[1])
+    y2 = min(int(ys.max()) + margin + 1, img_bgr.shape[0])
+    return img_bgr[y1:y2, x1:x2], mask_u8[y1:y2, x1:x2]
+
+def apply_mask_background(img_bgr: np.ndarray, mask_u8: np.ndarray) -> np.ndarray:
+    if mask_u8 is None:
+        return img_bgr
+    m = mask_u8 > 127
+    if not np.any(m):
+        return img_bgr
+    obj_pixels = img_bgr[m]
+    avg_color = np.mean(obj_pixels, axis=0).astype(np.uint8)
+    out = img_bgr.copy()
+    out[~m] = avg_color
+    return out
+
 def bbox_iou(a, b) -> float:
     ax1, ay1, ax2, ay2 = a
     bx1, by1, bx2, by2 = b
@@ -810,6 +836,12 @@ async def export_3d(
 
     styl_bgr = track.stylized_crop
     mask_u8 = track.last_mask_crop
+    if mask_u8 is None:
+        raise HTTPException(status_code=404, detail="No mask for selected track")
+
+    # Tight-crop to the actual mask so the exported mesh only contains the object.
+    styl_bgr, mask_u8 = crop_to_mask(styl_bgr, mask_u8, margin=2)
+    styl_bgr = apply_mask_background(styl_bgr, mask_u8)
 
     cfg = PipelineConfig(bake_texture=False)
     output_dir, _ = run_pipeline(image=bgr_to_pil(styl_bgr), mask=mask_u8, cfg=cfg)
