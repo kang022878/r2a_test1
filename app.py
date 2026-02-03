@@ -1,5 +1,7 @@
 import base64
 import io
+import os
+import socket
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -271,7 +273,7 @@ const ctx = canvas.getContext('2d');
 let running = false;
 let inflight = false;
 
-const INTERVAL_MS = 350;  // 2~4fps
+const INTERVAL_MS = 33;  // ~30fps (1000/30)
 const SEND_W = 512;       // 업로드 해상도(낮출수록 빨라짐)
 
 let selectedId = null;
@@ -373,7 +375,7 @@ async function tick(){
 
     const t = data.timings_ms || {};
     const timingStr = Object.keys(t).length
-      ? ` | r${t.read || 0} d${t.decode || 0} y${t.detect || 0} s${t.sdxl || 0} j${t.jpeg || 0}`
+      ? ` | 읽기 ${t.read || 0} 디코드 ${t.decode || 0} 검출 ${t.detect || 0} 스타일 ${t.sdxl || 0} 인코딩 ${t.jpeg || 0} (ms)`
       : '';
     if (data.ok) {
       setStatus(`OK | ${dt}ms | det=${data.detected} | ${data.class_name || ''}${timingStr}`);
@@ -436,6 +438,26 @@ overlay.addEventListener('click', (ev) => {
 </body>
 </html>
 """
+
+def _get_local_ip() -> str:
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+
+@app.get("/ip")
+def get_ip():
+    """같은 Wi‑Fi의 폰에서 접속할 때 쓸 URL (서버 실행 시 --host 0.0.0.0 필요)"""
+    port = os.environ.get("PORT", "80")
+    ip = _get_local_ip()
+    return {"ip": ip, "port": port, "url": f"http://{ip}:{port}"}
+
 
 @app.get("/", response_class=HTMLResponse)
 def index():
