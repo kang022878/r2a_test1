@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+.env
+.DS_Store
+
+# Outputs
+outputs/*
+!outputs/.gitkeep
+
+# Temp
+.tmp/
+
+# Local artifacts
+*.zip
