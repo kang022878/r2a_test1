@@ -1,13 +1,17 @@
-# app.py dependencies (from imports)
-opencv-python
-numpy
-Pillow
-torch
-torchvision
-fastapi
-uvicorn[standard]
+# Web framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
 python-multipart
-ultralytics
-diffusers
-accelerate
-transformers
+
+# Image & vision
+opencv-python>=4.8.0
+numpy>=1.24.0
+Pillow>=10.0.0
+
+# Deep learning
+torch>=2.1.0
+torchvision
+ultralytics>=8.0.0
+diffusers>=0.25.0
+transformers>=4.36.0
+accelerate>=0.25.0
