@@ -151,6 +151,7 @@ async def stylize_auto(
                     last_seen=now_ts,
                     stylized_crop=None,
                     last_mask_crop=None,
+                    last_mask_crop_raw=None,
                     seed=SEED + tracking.NEXT_TRACK_ID,
                 )
                 tracking.NEXT_TRACK_ID += 1
@@ -249,21 +250,24 @@ async def stylize_auto(
         })
 
     if masks is not None:
-        mask_full = (masks[idx] > 0.5).astype(np.uint8) * 255
-        if mask_full.shape[:2] != bgr.shape[:2]:
-            mask_full = cv2.resize(mask_full, (bgr.shape[1], bgr.shape[0]), interpolation=cv2.INTER_NEAREST)
-        mask_full = dilate_and_feather(mask_full, dilate_px=2, feather_px=3)
+        mask_full_raw = (masks[idx] > 0.5).astype(np.uint8) * 255
+        if mask_full_raw.shape[:2] != bgr.shape[:2]:
+            mask_full_raw = cv2.resize(mask_full_raw, (bgr.shape[1], bgr.shape[0]), interpolation=cv2.INTER_NEAREST)
+        mask_full = dilate_and_feather(mask_full_raw, dilate_px=2, feather_px=3)
         if int(np.sum(mask_full > 127)) < MIN_MASK_PIXELS:
-            mask_full = np.zeros(bgr.shape[:2], dtype=np.uint8)
-            cv2.rectangle(mask_full, (x1, y1), (x2, y2), 255, thickness=-1)
+            mask_full_raw = np.zeros(bgr.shape[:2], dtype=np.uint8)
+            cv2.rectangle(mask_full_raw, (x1, y1), (x2, y2), 255, thickness=-1)
+            mask_full = mask_full_raw.copy()
     else:
-        mask_full = np.zeros(bgr.shape[:2], dtype=np.uint8)
-        cv2.rectangle(mask_full, (x1, y1), (x2, y2), 255, thickness=-1)
+        mask_full_raw = np.zeros(bgr.shape[:2], dtype=np.uint8)
+        cv2.rectangle(mask_full_raw, (x1, y1), (x2, y2), 255, thickness=-1)
+        mask_full = mask_full_raw.copy()
 
     crop_bgr, info = crop_square(bgr, x1, y1, x2, y2, out_size=CROP_SIZE)
     if crop_bgr.size == 0:
         return JSONResponse({"ok": False, "detected": int(len(det_list)), "class_name": class_name})
     mask_crop_u8, _ = crop_square_gray(mask_full, x1, y1, x2, y2, out_size=CROP_SIZE)
+    mask_crop_raw_u8, _ = crop_square_gray(mask_full_raw, x1, y1, x2, y2, out_size=CROP_SIZE)
 
     obj_mask = (mask_crop_u8 > 127).astype(np.uint8)
     if np.any(obj_mask):
@@ -294,6 +298,7 @@ async def stylize_auto(
             last_seen=now_ts,
             stylized_crop=None,
             last_mask_crop=None,
+            last_mask_crop_raw=None,
             seed=SEED + tracking.NEXT_TRACK_ID,
         )
         tracking.NEXT_TRACK_ID += 1
@@ -333,6 +338,7 @@ async def stylize_auto(
     styl_crop_bgr = stabilize_stylized(track.stylized_crop, styl_crop_bgr, mask_crop_u8, STABILIZE_ALPHA)
     track.stylized_crop = styl_crop_bgr
     track.last_mask_crop = mask_crop_u8
+    track.last_mask_crop_raw = mask_crop_raw_u8
 
     pasted = paste_back(bgr, styl_crop_bgr, info)
     blended = alpha_blend(bgr, pasted, mask_full, alpha=float(blend_alpha))

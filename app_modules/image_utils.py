@@ -144,3 +144,33 @@ def apply_mask_background(img_bgr: np.ndarray, mask_u8: np.ndarray) -> np.ndarra
     out = img_bgr.copy()
     out[~m] = avg_color
     return out
+
+
+def refine_mask_for_export(
+    mask_u8: np.ndarray,
+    min_area: int = 300,
+    open_px: int = 2,
+    close_px: int = 2,
+) -> np.ndarray:
+    if mask_u8 is None:
+        return mask_u8
+    m = (mask_u8 > 127).astype(np.uint8)
+    if m.sum() == 0:
+        return mask_u8
+
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(m, connectivity=8)
+    if num_labels > 1:
+        areas = stats[1:, cv2.CC_STAT_AREA]
+        best_idx = 1 + int(np.argmax(areas))
+        m = (labels == best_idx).astype(np.uint8)
+
+    if min_area > 0 and int(m.sum()) < min_area:
+        return (m * 255).astype(np.uint8)
+
+    if open_px > 0:
+        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (open_px * 2 + 1, open_px * 2 + 1))
+        m = cv2.morphologyEx(m, cv2.MORPH_OPEN, k, iterations=1)
+    if close_px > 0:
+        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_px * 2 + 1, close_px * 2 + 1))
+        m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, k, iterations=1)
+    return (m * 255).astype(np.uint8)

@@ -12,6 +12,7 @@ class Track:
     last_seen: float
     stylized_crop: object
     last_mask_crop: Optional[object]
+    last_mask_crop_raw: Optional[object]
     seed: int
 
 
