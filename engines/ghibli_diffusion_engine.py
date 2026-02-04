@@ -220,6 +220,10 @@ class GhibliDiffusionEngine(BaseStyleEngine):
         else:
             pipe_kw["ip_adapter_image"] = content_image
 
+        # 두 번째 이후: 일관성 위해 ip_scale=1.0
+        effective_scale = 1.0 if not is_first_gen else self.ip_scale
+        self._pipe.set_ip_adapter_scale(effective_scale)
+
         with torch.no_grad():
             result = self._pipe(**pipe_kw)
             output_image = result.images[0]
