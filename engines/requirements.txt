@@ -1,0 +1,11 @@
+# Ghibli Diffusion engine 전용. engines 폴더만 다른 프로젝트로 복사할 때 사용.
+# 설치: pip install -r engines/requirements.txt
+
+torch>=2.0.0
+torchvision>=0.15.0
+Pillow>=10.0.0
+numpy>=1.24.0
+opencv-python>=4.8.0
+diffusers>=0.25.0
+transformers>=4.35.0
+accelerate>=0.25.0
