@@ -1,6 +1,7 @@
 """Ghibli Diffusion: Img2Img + Canny(구조) + Ghibli(화풍) + LCM + IP-Adapter + Seed. 배경/인물 유지·눈 묘사 강화."""
 
 import io
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -10,6 +11,7 @@ from PIL import Image
 from .base_engine import BaseStyleEngine
 
 LCM_LORA = "latent-consistency/lcm-lora-sdv1-5"
+PRECOMPUTED_EMBEDS_PATH = Path(__file__).resolve().parent.parent / "train_data" / "ip_adapter_embeds.pt"
 IP_ADAPTER_REPO = "h94/IP-Adapter"
 IP_ADAPTER_WEIGHT = "ip-adapter_sd15.bin"
 
@@ -46,6 +48,9 @@ class GhibliDiffusionEngine(BaseStyleEngine):
         self.default_seed = default_seed
 
         self._pipe = None
+        self._precomputed_embeds = None  # train_data 사전 인코딩 (첫 생성용)
+        self._first_gen_embeds = None  # 첫 스타일 결과 인코딩 (이후 일관성용)
+
         self._default_prompt = (
             "ghibli style, cute anime character, fantasy character, illustrated character, "
             "soft features, expressive eyes, kawaii, stylized portrait, "
@@ -111,6 +116,17 @@ class GhibliDiffusionEngine(BaseStyleEngine):
                 self._pipe.enable_xformers_memory_efficient_attention()
             except Exception:
                 pass
+
+        # 사전 인코딩된 train_data 임베딩 로드 (첫 생성 시 사용)
+        if PRECOMPUTED_EMBEDS_PATH.exists():
+            data = torch.load(PRECOMPUTED_EMBEDS_PATH, map_location=self.device, weights_only=False)
+            self._precomputed_embeds = data["embeds"]
+
+    def _to_device(self, x, device):
+        """임베딩을 디바이스로 이동."""
+        if isinstance(x, (list, tuple)):
+            return [self._to_device(t, device) for t in x]
+        return x.to(device) if hasattr(x, "to") else x
 
     def extract_canny_edge(self, image: Image.Image) -> Image.Image:
         """Canny 엣지 (형태 고정용)."""
@@ -183,20 +199,41 @@ class GhibliDiffusionEngine(BaseStyleEngine):
 
         generator = torch.Generator(device=self.device).manual_seed(seed)
 
+        # IP-Adapter: 1) 첫 생성 → 사전 인코딩(train_data), 2) 이후 → 첫 결과 인코딩 캐시
+        use_embeds = self._first_gen_embeds if self._first_gen_embeds is not None else self._precomputed_embeds
+        is_first_gen = self._first_gen_embeds is None
+
+        pipe_kw = {
+            "prompt": prompt,
+            "negative_prompt": negative_prompt,
+            "image": content_image,
+            "control_image": canny_image,
+            "strength": strength,
+            "num_inference_steps": num_inference_steps,
+            "guidance_scale": guidance_scale,
+            "controlnet_conditioning_scale": controlnet_scale,
+            "generator": generator,
+        }
+        if use_embeds is not None:
+            embeds = self._to_device(use_embeds, self.device)
+            pipe_kw["ip_adapter_image_embeds"] = embeds
+        else:
+            pipe_kw["ip_adapter_image"] = content_image
+
         with torch.no_grad():
-            result = self._pipe(
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                image=content_image,
-                control_image=canny_image,
-                strength=strength,
-                ip_adapter_image=content_image,
-                num_inference_steps=num_inference_steps,
-                guidance_scale=guidance_scale,
-                controlnet_conditioning_scale=controlnet_scale,
-                generator=generator,
-            )
+            result = self._pipe(**pipe_kw)
             output_image = result.images[0]
+
+        # 첫 생성 후: 결과 이미지로 임베딩 계산해 캐시 (이후 일관성용)
+        if is_first_gen:
+            self._first_gen_embeds = self._pipe.prepare_ip_adapter_image_embeds(
+                ip_adapter_image=output_image,
+                ip_adapter_image_embeds=None,
+                device=self.device,
+                num_images_per_prompt=1,
+                do_classifier_free_guidance=True,
+            )
+            self._first_gen_embeds = self._to_device(self._first_gen_embeds, "cpu")  # CPU 캐시로 저장
 
         buffer = io.BytesIO()
         output_image.save(buffer, format="JPEG", quality=95)
