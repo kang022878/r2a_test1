@@ -1,192 +1,45 @@
 import base64
-import io
 import os
-import socket
 import time
-from dataclasses import dataclass
 from typing import Optional
-from pathlib import Path
 
 import cv2
 import numpy as np
-from PIL import Image
-
 import torch
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
-from ultralytics import YOLO
-from diffusers import StableDiffusionXLImg2ImgPipeline
+from fastapi import FastAPI, UploadFile, File, Form
+from fastapi.responses import HTMLResponse, JSONResponse
 
-from image2mesh.pipeline import run_pipeline, PipelineConfig
-from image2mesh.export import package_obj
-YOLO_MODEL = "yolov8n-seg.pt"
-SDXL_TURBO_MODEL = "stabilityai/sdxl-turbo"
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+from app_modules import tracking
+from app_modules.config import (
+    DEVICE,
+    CROP_SIZE,
+    STEPS,
+    STRENGTH,
+    CFG,
+    SEED,
+    CONF_THRESHOLD,
+    DETECT_EVERY_N,
+    NEGATIVE_BASE,
+    PRESERVE_BASE,
+    MIN_BOX_SIZE,
+    MIN_MASK_PIXELS,
+    STYLE_PRESETS,
+    STABILIZE_ALPHA,
+)
+from app_modules.image_utils import (
+    decode_upload_to_bgr,
+    dilate_and_feather,
+    alpha_blend,
+    crop_square,
+    crop_square_gray,
+    paste_back,
+    fallback_stylize,
+)
+from app_modules.models import load_models
+from app_modules.net import get_local_ip
+from app_modules.ui import INDEX_HTML
+from app_modules.export3d import export_3d_file
 
-CROP_SIZE = 384
-STEPS = 2
-STRENGTH = 0.35
-CFG = 1.0
-SEED = 123
-IOU_THRESHOLD = 0.35
-TRACK_TTL_SEC = 2.5
-STABILIZE_ALPHA = 0.7
-CONF_THRESHOLD = 0.15
-DETECT_EVERY_N = 4
-NEGATIVE_BASE = "text, watermark, logo, extra limbs, deformed"
-PRESERVE_BASE = "preserve identity, preserve colors, preserve shape, preserve textures, minimal changes, keep details, same composition"
-MIN_BOX_SIZE = 4
-MIN_MASK_PIXELS = 30
-
-STYLE_PRESETS = {
-    "ghibli": "hand-painted animation style, warm pastel colors, soft shading, detailed illustration",
-    "pixel":  "pixel art style, 16-bit game sprite, limited color palette, crisp edges",
-    "toon":   "clean toon shading, bold outlines, vibrant colors, comic style",
-}
-
-
-def decode_upload_to_bgr(file_bytes: bytes) -> np.ndarray:
-    pil = Image.open(io.BytesIO(file_bytes)).convert("RGB")
-    rgb = np.array(pil)
-    return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-
-def bgr_to_pil(bgr: np.ndarray) -> Image.Image:
-    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-    return Image.fromarray(rgb)
-
-def dilate_and_feather(mask_u8: np.ndarray, dilate_px: int = 6, feather_px: int = 5) -> np.ndarray:
-    m = (mask_u8 > 127).astype(np.uint8) * 255
-    if dilate_px > 0:
-        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dilate_px*2+1, dilate_px*2+1))
-        m = cv2.dilate(m, k, iterations=1)
-    if feather_px > 0:
-        ksize = feather_px*2 + 1
-        m = cv2.GaussianBlur(m, (ksize, ksize), 0)
-    return m
-
-def alpha_blend(original_bgr: np.ndarray, stylized_bgr: np.ndarray, mask_u8: np.ndarray, alpha: float) -> np.ndarray:
-    m = (mask_u8.astype(np.float32) / 255.0)[..., None]
-    m = np.clip(m * alpha, 0.0, 1.0)
-    out = original_bgr.astype(np.float32) * (1.0 - m) + stylized_bgr.astype(np.float32) * m
-    return np.clip(out, 0, 255).astype(np.uint8)
-
-def crop_square(img_bgr: np.ndarray, x1: int, y1: int, x2: int, y2: int, out_size: int):
-    h, w = img_bgr.shape[:2]
-    x1 = max(0, min(w-1, x1)); x2 = max(0, min(w, x2))
-    y1 = max(0, min(h-1, y1)); y2 = max(0, min(h, y2))
-
-    roi = img_bgr[y1:y2, x1:x2]
-    rh, rw = roi.shape[:2]
-    if rh <= 0 or rw <= 0:
-        raise ValueError("Invalid crop")
-
-    side = max(rh, rw)
-    pad_top = (side - rh)//2
-    pad_left = (side - rw)//2
-    pad_bottom = side - rh - pad_top
-    pad_right = side - rw - pad_left
-
-    roi_pad = cv2.copyMakeBorder(roi, pad_top, pad_bottom, pad_left, pad_right, cv2.BORDER_REFLECT_101)
-    roi_resized = cv2.resize(roi_pad, (out_size, out_size), interpolation=cv2.INTER_LANCZOS4)
-
-    info = (x1, y1, x2, y2, pad_top, pad_left, side)
-    return roi_resized, info
-
-def crop_square_gray(img_u8: np.ndarray, x1: int, y1: int, x2: int, y2: int, out_size: int):
-    h, w = img_u8.shape[:2]
-    x1 = max(0, min(w-1, x1)); x2 = max(0, min(w, x2))
-    y1 = max(0, min(h-1, y1)); y2 = max(0, min(h, y2))
-
-    roi = img_u8[y1:y2, x1:x2]
-    rh, rw = roi.shape[:2]
-    if rh <= 0 or rw <= 0:
-        raise ValueError("Invalid crop")
-
-    side = max(rh, rw)
-    pad_top = (side - rh)//2
-    pad_left = (side - rw)//2
-    pad_bottom = side - rh - pad_top
-    pad_right = side - rw - pad_left
-
-    roi_pad = cv2.copyMakeBorder(roi, pad_top, pad_bottom, pad_left, pad_right, cv2.BORDER_REFLECT_101)
-    roi_resized = cv2.resize(roi_pad, (out_size, out_size), interpolation=cv2.INTER_NEAREST)
-
-    info = (x1, y1, x2, y2, pad_top, pad_left, side)
-    return roi_resized, info
-
-def paste_back(original_bgr: np.ndarray, styl_square_bgr: np.ndarray, info):
-    x1, y1, x2, y2, pad_top, pad_left, side = info
-    styl_sq = cv2.resize(styl_square_bgr, (side, side), interpolation=cv2.INTER_LANCZOS4)
-    rh = y2 - y1
-    rw = x2 - x1
-    crop = styl_sq[pad_top:pad_top+rh, pad_left:pad_left+rw]
-    out = original_bgr.copy()
-    out[y1:y2, x1:x2] = crop
-    return out
-
-def pixelate_bgr(img_bgr: np.ndarray, scale: float = 0.12) -> np.ndarray:
-    h, w = img_bgr.shape[:2]
-    sw = max(1, int(w * scale))
-    sh = max(1, int(h * scale))
-    small = cv2.resize(img_bgr, (sw, sh), interpolation=cv2.INTER_AREA)
-    return cv2.resize(small, (w, h), interpolation=cv2.INTER_NEAREST)
-
-def toon_bgr(img_bgr: np.ndarray) -> np.ndarray:
-    color = cv2.bilateralFilter(img_bgr, d=7, sigmaColor=75, sigmaSpace=75)
-    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-    edges = cv2.Canny(gray, 80, 120)
-    edges = cv2.dilate(edges, np.ones((2, 2), np.uint8), iterations=1)
-    edges_inv = cv2.bitwise_not(edges)
-    edges_inv = cv2.cvtColor(edges_inv, cv2.COLOR_GRAY2BGR)
-    return cv2.bitwise_and(color, edges_inv)
-
-def fallback_stylize(img_bgr: np.ndarray, style: str) -> np.ndarray:
-    if style == "pixel":
-        return pixelate_bgr(img_bgr, scale=0.12)
-    return toon_bgr(img_bgr)
-
-def crop_to_mask(img_bgr: np.ndarray, mask_u8: np.ndarray, margin: int = 4):
-    if mask_u8 is None:
-        return img_bgr, mask_u8
-    if mask_u8.shape[:2] != img_bgr.shape[:2]:
-        mask_u8 = cv2.resize(mask_u8, (img_bgr.shape[1], img_bgr.shape[0]), interpolation=cv2.INTER_NEAREST)
-    ys, xs = np.where(mask_u8 > 127)
-    if len(xs) == 0 or len(ys) == 0:
-        return img_bgr, mask_u8
-    x1 = max(int(xs.min()) - margin, 0)
-    y1 = max(int(ys.min()) - margin, 0)
-    x2 = min(int(xs.max()) + margin + 1, img_bgr.shape[1])
-    y2 = min(int(ys.max()) + margin + 1, img_bgr.shape[0])
-    return img_bgr[y1:y2, x1:x2], mask_u8[y1:y2, x1:x2]
-
-def apply_mask_background(img_bgr: np.ndarray, mask_u8: np.ndarray) -> np.ndarray:
-    if mask_u8 is None:
-        return img_bgr
-    m = mask_u8 > 127
-    if not np.any(m):
-        return img_bgr
-    obj_pixels = img_bgr[m]
-    avg_color = np.mean(obj_pixels, axis=0).astype(np.uint8)
-    out = img_bgr.copy()
-    out[~m] = avg_color
-    return out
-
-def bbox_iou(a, b) -> float:
-    ax1, ay1, ax2, ay2 = a
-    bx1, by1, bx2, by2 = b
-    inter_x1 = max(ax1, bx1)
-    inter_y1 = max(ay1, by1)
-    inter_x2 = min(ax2, bx2)
-    inter_y2 = min(ay2, by2)
-    iw = max(0, inter_x2 - inter_x1)
-    ih = max(0, inter_y2 - inter_y1)
-    inter = iw * ih
-    area_a = max(0, ax2 - ax1) * max(0, ay2 - ay1)
-    area_b = max(0, bx2 - bx1) * max(0, by2 - by1)
-    union = area_a + area_b - inter
-    if union <= 0:
-        return 0.0
-    return inter / union
 
 def stabilize_stylized(prev_bgr: np.ndarray, curr_bgr: np.ndarray, mask_u8: np.ndarray, alpha_prev: float):
     if prev_bgr is None:
@@ -196,332 +49,15 @@ def stabilize_stylized(prev_bgr: np.ndarray, curr_bgr: np.ndarray, mask_u8: np.n
     out = out * (1.0 - m) + (prev_bgr.astype(np.float32) * alpha_prev + curr_bgr.astype(np.float32) * (1.0 - alpha_prev)) * m
     return np.clip(out, 0, 255).astype(np.uint8)
 
-@dataclass
-class Track:
-    track_id: int
-    class_id: int
-    bbox: tuple
-    last_seen: float
-    stylized_crop: np.ndarray
-    last_mask_crop: Optional[np.ndarray]
-    seed: int
-
-TRACKS = []
-NEXT_TRACK_ID = 1
-FRAME_COUNT = 0
-LAST_DETS = []
-LAST_IMAGE_WH = (0, 0)
-
-def match_track(class_id: int, bbox: tuple):
-    best = None
-    best_iou = 0.0
-    for t in TRACKS:
-        if t.class_id != class_id:
-            continue
-        iou = bbox_iou(t.bbox, bbox)
-        if iou > best_iou:
-            best_iou = iou
-            best = t
-    if best_iou >= IOU_THRESHOLD:
-        return best
-    return None
-
-def prune_tracks(now_ts: float, keep_id: Optional[int] = None):
-    global TRACKS
-    kept = []
-    for t in TRACKS:
-        if keep_id is not None and t.track_id == keep_id:
-            kept.append(t)
-        elif (now_ts - t.last_seen) <= TRACK_TTL_SEC:
-            kept.append(t)
-    TRACKS = kept
-
-
 app = FastAPI()
-
-print("[init] YOLOv8-seg loading...")
-yolo = YOLO(YOLO_MODEL)
-
-print("[init] SDXL Turbo loading...")
-pipe_dtype = torch.float16 if DEVICE == "cuda" else torch.float32
-pipe_kwargs = {"torch_dtype": pipe_dtype}
-if DEVICE == "cuda":
-    pipe_kwargs["variant"] = "fp16"
-pipe = StableDiffusionXLImg2ImgPipeline.from_pretrained(
-    SDXL_TURBO_MODEL,
-    **pipe_kwargs,
-).to(DEVICE)
-pipe.set_progress_bar_config(disable=True)
-
-
-INDEX_HTML = r"""
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Live Stylize MVP</title>
-  <style>
-    body { margin:0; font-family: system-ui, -apple-system, sans-serif; background:#000; color:#fff; }
-    #wrap { position: relative; width:100vw; height:100vh; overflow:hidden; }
-    video, img { position:absolute; top:0; left:0; width:100%; height:100%; object-fit:cover; }
-    #boxes { position:absolute; inset:0; pointer-events:none; }
-    .box { position:absolute; border:2px solid rgba(255,255,255,0.8); border-radius:6px; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.5); }
-    .box.selected { border-color:#00ffcc; }
-    #ui { position:absolute; left:12px; right:12px; bottom:12px; display:flex; gap:10px; align-items:center; }
-    button, select { padding:12px 14px; font-size:16px; border-radius:12px; border:none; }
-    button { background:#fff; color:#000; font-weight:600; }
-    #status { position:absolute; top:12px; left:12px; background:rgba(0,0,0,0.6); padding:8px 10px; border-radius:10px; font-size:13px; }
-  </style>
-</head>
-<body>
-<div id="wrap">
-  <video id="video" autoplay playsinline></video>
-  <img id="overlay" />
-  <div id="boxes"></div>
-  <div id="status">Idle</div>
-  <div id="ui">
-    <select id="style">
-      <option value="ghibli">Ghibli-ish</option>
-      <option value="pixel">Pixel</option>
-      <option value="toon">Toon</option>
-    </select>
-    <button id="start">Start</button>
-    <button id="stop">Stop</button>
-    <button id="export3d">Export 3D</button>
-  </div>
-</div>
-
-<script>
-const video = document.getElementById('video');
-const overlay = document.getElementById('overlay');
-const statusEl = document.getElementById('status');
-const styleSel = document.getElementById('style');
-const exportBtn = document.getElementById('export3d');
-
-const canvas = document.createElement('canvas');
-const ctx = canvas.getContext('2d');
-
-let running = false;
-let inflight = false;
-
-const INTERVAL_MS = 33;  // ~30fps (1000/30)
-const SEND_W = 512;       // 업로드 해상도(낮출수록 빨라짐)
-
-let selectedId = null;
-let lastBoxes = [];
-let lastImage = { w: 0, h: 0 };
-
-function setStatus(s){ statusEl.textContent = s; }
-
-async function setupCamera(){
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: 'environment' },
-    audio: false
-  });
-  video.srcObject = stream;
-  await video.play();
-  setStatus("Camera ready");
-}
-
-function frameToBlob(){
-  const vw = video.videoWidth, vh = video.videoHeight;
-  if (!vw || !vh) return null;
-
-  const scale = SEND_W / vw;
-  const sw = SEND_W;
-  const sh = Math.round(vh * scale);
-
-  canvas.width = sw;
-  canvas.height = sh;
-  ctx.drawImage(video, 0, 0, sw, sh);
-
-  return new Promise(resolve => {
-    canvas.toBlob(b => resolve(b), 'image/jpeg', 0.6);
-  });
-}
-
-function imageFitMetrics(){
-  const rect = overlay.getBoundingClientRect();
-  const vw = rect.width, vh = rect.height;
-  const iw = lastImage.w, ih = lastImage.h;
-  if (!vw || !vh || !iw || !ih) return null;
-  const scale = Math.max(vw / iw, vh / ih);
-  const dispW = iw * scale;
-  const dispH = ih * scale;
-  const offsetX = (vw - dispW) / 2;
-  const offsetY = (vh - dispH) / 2;
-  return { scale, offsetX, offsetY };
-}
-
-function renderBoxes(){
-  const boxLayer = document.getElementById('boxes');
-  boxLayer.innerHTML = '';
-  const fit = imageFitMetrics();
-  if (!fit) return;
-  for (const b of lastBoxes) {
-    const x = b.x1 * fit.scale + fit.offsetX;
-    const y = b.y1 * fit.scale + fit.offsetY;
-    const w = (b.x2 - b.x1) * fit.scale;
-    const h = (b.y2 - b.y1) * fit.scale;
-    const el = document.createElement('div');
-    el.className = 'box' + (b.track_id === selectedId ? ' selected' : '');
-    el.style.left = `${x}px`;
-    el.style.top = `${y}px`;
-    el.style.width = `${w}px`;
-    el.style.height = `${h}px`;
-    boxLayer.appendChild(el);
-  }
-}
-
-async function tick(){
-  if (!running) return;
-  if (inflight) { setTimeout(tick, INTERVAL_MS); return; }
-
-  inflight = true;
-  try {
-    const blob = await frameToBlob();
-    if (!blob) { inflight=false; setTimeout(tick, INTERVAL_MS); return; }
-
-    const fd = new FormData();
-    fd.append('image', blob, 'frame.jpg');
-    fd.append('style', styleSel.value);
-    fd.append('blend_alpha', '1.0');
-    if (selectedId !== null) fd.append('selected_id', String(selectedId));
-
-    const t0 = performance.now();
-    const res = await fetch('/stylize_auto', { method:'POST', body: fd });
-    if (!res.ok) {
-      const txt = await res.text();
-      throw new Error(`HTTP ${res.status}: ${txt.slice(0, 120)}`);
-    }
-    const data = await res.json();
-    const dt = Math.round(performance.now() - t0);
-
-    if (data.image_base64) {
-      overlay.src = 'data:image/jpeg;base64,' + data.image_base64;
-    }
-    lastBoxes = data.boxes || [];
-    lastImage = { w: data.image_w || 0, h: data.image_h || 0 };
-    renderBoxes();
-
-    const t = data.timings_ms || {};
-    const timingStr = Object.keys(t).length
-      ? ` | 읽기 ${t.read || 0} 디코드 ${t.decode || 0} 검출 ${t.detect || 0} 스타일 ${t.sdxl || 0} 인코딩 ${t.jpeg || 0} (ms)`
-      : '';
-    if (data.ok) {
-      setStatus(`OK | ${dt}ms | det=${data.detected} | ${data.class_name || ''}${timingStr}`);
-    } else if (selectedId === null && (data.detected || 0) > 0) {
-      setStatus(`Tap a box | ${dt}ms | det=${data.detected}${timingStr}`);
-    } else {
-      setStatus(`No object | ${dt}ms | ${data.class_name || ''}${timingStr}`);
-    }
-  } catch (e) {
-    console.error(e);
-    setStatus('Error: ' + e);
-  } finally {
-    inflight = false;
-    setTimeout(tick, INTERVAL_MS);
-  }
-}
-
-document.getElementById('start').onclick = () => {
-  running = true;
-  setStatus("Running...");
-  tick();
-};
-document.getElementById('stop').onclick = () => {
-  running = false;
-  setStatus("Stopped");
-};
-
-exportBtn.onclick = async () => {
-  if (selectedId === null) {
-    setStatus("Select an object first");
-    return;
-  }
-  exportBtn.disabled = true;
-  setStatus("Exporting 3D...");
-  try {
-    const fd = new FormData();
-    fd.append('selected_id', String(selectedId));
-    fd.append('format', 'obj');
-    const res = await fetch('/export_3d', { method: 'POST', body: fd });
-    if (!res.ok) {
-      const txt = await res.text();
-      throw new Error(`HTTP ${res.status}: ${txt.slice(0, 200)}`);
-    }
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'model_obj.zip';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-    setStatus("Exported 3D");
-  } catch (e) {
-    console.error(e);
-    setStatus("Export error: " + e);
-  } finally {
-    exportBtn.disabled = false;
-  }
-};
-
-setupCamera().catch(e => setStatus("Camera error: " + e));
-window.addEventListener('resize', renderBoxes);
-
-overlay.addEventListener('click', (ev) => {
-  const fit = imageFitMetrics();
-  if (!fit || !lastBoxes.length) return;
-  const rect = overlay.getBoundingClientRect();
-  const xView = ev.clientX - rect.left;
-  const yView = ev.clientY - rect.top;
-  const xImg = (xView - fit.offsetX) / fit.scale;
-  const yImg = (yView - fit.offsetY) / fit.scale;
-
-  let hit = null;
-  let hitArea = Infinity;
-  for (const b of lastBoxes) {
-    if (xImg >= b.x1 && xImg <= b.x2 && yImg >= b.y1 && yImg <= b.y2) {
-      const area = (b.x2 - b.x1) * (b.y2 - b.y1);
-      if (area < hitArea) {
-        hitArea = area;
-        hit = b;
-      }
-    }
-  }
-  if (!hit) return;
-  if (selectedId === hit.track_id) {
-    selectedId = null;
-  } else {
-    selectedId = hit.track_id;
-  }
-  renderBoxes();
-});
-</script>
-</body>
-</html>
-"""
-
-def _get_local_ip() -> str:
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.settimeout(0)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except Exception:
-        return "127.0.0.1"
+yolo, pipe = load_models()
 
 
 @app.get("/ip")
 def get_ip():
     """같은 Wi‑Fi의 폰에서 접속할 때 쓸 URL (서버 실행 시 --host 0.0.0.0 필요)"""
     port = os.environ.get("PORT", "80")
-    ip = _get_local_ip()
+    ip = get_local_ip()
     return {"ip": ip, "port": port, "url": f"http://{ip}:{port}"}
 
 
@@ -537,8 +73,7 @@ async def stylize_auto(
     blend_alpha: float = Form(1.0),
     selected_id: Optional[int] = Form(None),
 ):
-    global NEXT_TRACK_ID
-    global FRAME_COUNT, LAST_DETS, LAST_IMAGE_WH
+    global yolo, pipe
     boxes = []
     if style not in STYLE_PRESETS:
         style = "ghibli"
@@ -549,10 +84,10 @@ async def stylize_auto(
     bgr = decode_upload_to_bgr(img_bytes)
     t_decode = time.perf_counter()
     now_ts = time.time()
-    prune_tracks(now_ts, keep_id=selected_id)
+    tracking.prune_tracks(now_ts, keep_id=selected_id)
 
-    FRAME_COUNT += 1
-    run_detect = selected_id is not None or (FRAME_COUNT % DETECT_EVERY_N) == 1 or not LAST_DETS
+    tracking.FRAME_COUNT += 1
+    run_detect = selected_id is not None or (tracking.FRAME_COUNT % DETECT_EVERY_N) == 1 or not tracking.LAST_DETS
     masks = None
     if run_detect:
         t_det0 = time.perf_counter()
@@ -560,8 +95,8 @@ async def stylize_auto(
         r = results[0]
         t_det1 = time.perf_counter()
         if r.boxes is None or len(r.boxes) == 0:
-            LAST_DETS = []
-            LAST_IMAGE_WH = (int(bgr.shape[1]), int(bgr.shape[0]))
+            tracking.LAST_DETS = []
+            tracking.LAST_IMAGE_WH = (int(bgr.shape[1]), int(bgr.shape[0]))
             return JSONResponse({
                 "ok": False,
                 "detected": 0,
@@ -584,14 +119,14 @@ async def stylize_auto(
         best_sel_idx = None
         best_sel_iou = 0.0
         if selected_id is not None:
-            selected_track = next((t for t in TRACKS if t.track_id == selected_id), None)
+            selected_track = next((t for t in tracking.TRACKS if t.track_id == selected_id), None)
             if selected_track is not None:
                 for i in range(len(boxes)):
                     bx1, by1, bx2, by2 = boxes.xyxy[i].cpu().numpy().astype(int).tolist()
                     cid = int(boxes.cls[i].cpu().numpy().item())
                     if cid != selected_track.class_id:
                         continue
-                    iou = bbox_iou(selected_track.bbox, (bx1, by1, bx2, by2))
+                    iou = tracking.bbox_iou(selected_track.bbox, (bx1, by1, bx2, by2))
                     if iou > best_sel_iou:
                         best_sel_iou = iou
                         best_sel_idx = i
@@ -605,21 +140,21 @@ async def stylize_auto(
             if selected_track is not None and best_sel_idx is not None and i == best_sel_idx:
                 track = selected_track
             else:
-                track = match_track(cid, (bx1, by1, bx2, by2))
+                track = tracking.match_track(cid, (bx1, by1, bx2, by2))
             if track is not None and track.track_id in used_tracks:
                 track = None
             if track is None:
-                track = Track(
-                    track_id=NEXT_TRACK_ID,
+                track = tracking.Track(
+                    track_id=tracking.NEXT_TRACK_ID,
                     class_id=cid,
                     bbox=(bx1, by1, bx2, by2),
                     last_seen=now_ts,
                     stylized_crop=None,
                     last_mask_crop=None,
-                    seed=SEED + NEXT_TRACK_ID,
+                    seed=SEED + tracking.NEXT_TRACK_ID,
                 )
-                NEXT_TRACK_ID += 1
-                TRACKS.append(track)
+                tracking.NEXT_TRACK_ID += 1
+                tracking.TRACKS.append(track)
             track.last_seen = now_ts
             track.bbox = (bx1, by1, bx2, by2)
             used_tracks.add(track.track_id)
@@ -632,12 +167,12 @@ async def stylize_auto(
                 "track_id": track.track_id,
                 "idx": i,
             })
-        LAST_DETS = det_list
-        LAST_IMAGE_WH = (int(bgr.shape[1]), int(bgr.shape[0]))
+        tracking.LAST_DETS = det_list
+        tracking.LAST_IMAGE_WH = (int(bgr.shape[1]), int(bgr.shape[0]))
     else:
-        det_list = LAST_DETS
-        if LAST_IMAGE_WH != (int(bgr.shape[1]), int(bgr.shape[0])):
-            LAST_IMAGE_WH = (int(bgr.shape[1]), int(bgr.shape[0]))
+        det_list = tracking.LAST_DETS
+        if tracking.LAST_IMAGE_WH != (int(bgr.shape[1]), int(bgr.shape[0])):
+            tracking.LAST_IMAGE_WH = (int(bgr.shape[1]), int(bgr.shape[0]))
 
     # Select target detection: either a user-selected track or highest confidence.
     target = None
@@ -646,7 +181,7 @@ async def stylize_auto(
             target = d
             break
     if selected_id is not None and target is None:
-        track_fallback = next((t for t in TRACKS if t.track_id == selected_id), None)
+        track_fallback = next((t for t in tracking.TRACKS if t.track_id == selected_id), None)
         if track_fallback is not None and (now_ts - track_fallback.last_seen) <= TRACK_TTL_SEC:
             target = {
                 "x1": track_fallback.bbox[0],
@@ -699,7 +234,7 @@ async def stylize_auto(
     idx = target["idx"] if "idx" in target else 0
     x1, y1, x2, y2 = target["x1"], target["y1"], target["x2"], target["y2"]
     class_name = target["class_name"]
-    track = next((t for t in TRACKS if t.track_id == target["track_id"]), None)
+    track = next((t for t in tracking.TRACKS if t.track_id == target["track_id"]), None)
     class_id = track.class_id if track is not None else None
     box_w = x2 - x1
     box_h = y2 - y1
@@ -748,21 +283,21 @@ async def stylize_auto(
     prompt = (preserve + ", " + prompt).strip()
     if not prompt:
         prompt = "cartoon style, preserve details"
-    track = next((t for t in TRACKS if t.track_id == target["track_id"]), None)
+    track = next((t for t in tracking.TRACKS if t.track_id == target["track_id"]), None)
     if track is None:
-        track = match_track(class_id, (x1, y1, x2, y2))
+        track = tracking.match_track(class_id, (x1, y1, x2, y2))
     if track is None:
-        track = Track(
-            track_id=NEXT_TRACK_ID,
+        track = tracking.Track(
+            track_id=tracking.NEXT_TRACK_ID,
             class_id=class_id if class_id is not None else -1,
             bbox=(x1, y1, x2, y2),
             last_seen=now_ts,
             stylized_crop=None,
             last_mask_crop=None,
-            seed=SEED + NEXT_TRACK_ID,
+            seed=SEED + tracking.NEXT_TRACK_ID,
         )
-        NEXT_TRACK_ID += 1
-        TRACKS.append(track)
+        tracking.NEXT_TRACK_ID += 1
+        tracking.TRACKS.append(track)
     track.last_seen = now_ts
     track.bbox = (x1, y1, x2, y2)
 
@@ -830,27 +365,4 @@ async def export_3d(
     selected_id: int = Form(...),
     format: str = Form("obj"),
 ):
-    track = next((t for t in TRACKS if t.track_id == selected_id), None)
-    if track is None or track.stylized_crop is None:
-        raise HTTPException(status_code=404, detail="No stylized crop for selected track")
-
-    styl_bgr = track.stylized_crop
-    mask_u8 = track.last_mask_crop
-    if mask_u8 is None:
-        raise HTTPException(status_code=404, detail="No mask for selected track")
-
-    # Tight-crop to the actual mask so the exported mesh only contains the object.
-    styl_bgr, mask_u8 = crop_to_mask(styl_bgr, mask_u8, margin=2)
-    styl_bgr = apply_mask_background(styl_bgr, mask_u8)
-
-    cfg = PipelineConfig(bake_texture=False)
-    output_dir, _ = run_pipeline(image=bgr_to_pil(styl_bgr), mask=mask_u8, cfg=cfg)
-
-    if format == "obj":
-        zip_path = package_obj(output_dir)
-        return FileResponse(zip_path, media_type="application/zip", filename=zip_path.name)
-
-    glb_files = list(Path(output_dir).rglob("*.glb"))
-    if not glb_files:
-        raise HTTPException(status_code=404, detail="GLB not found")
-    return FileResponse(glb_files[0], media_type="model/gltf-binary", filename=glb_files[0].name)
+    return export_3d_file(selected_id, fmt=format)
