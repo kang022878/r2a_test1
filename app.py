@@ -1,12 +1,13 @@
 import base64
 import os
+import re
 import time
 from pathlib import Path
 from typing import Optional
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, UploadFile, File, Form
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -40,7 +41,7 @@ from app_modules.image_utils import (
 )
 from app_modules.models import load_models
 from app_modules.net import get_local_ip
-from app_modules.ui import INDEX_HTML
+from app_modules.ui import INDEX_HTML, PREVIEW_HTML
 from app_modules.export3d import export_3d_file
 
 
@@ -390,5 +391,28 @@ async def stylize_auto(
 async def export_3d(
     selected_id: int = Form(...),
     format: str = Form("obj"),
+    preview: Optional[str] = Form(None),
 ):
-    return export_3d_file(selected_id, fmt=format)
+    result = export_3d_file(
+        selected_id,
+        fmt="glb" if preview == "1" else format,
+        save_for_preview=(preview == "1"),
+    )
+    if isinstance(result, dict):
+        return JSONResponse(result)
+    return result
+
+
+@app.get("/preview", response_class=HTMLResponse)
+def preview_page():
+    return PREVIEW_HTML
+
+
+@app.get("/preview/file/{preview_id}")
+def preview_file(preview_id: str):
+    if not re.match(r"^[a-f0-9]{32}$", preview_id):
+        raise HTTPException(status_code=400, detail="Invalid preview_id")
+    path = Path("outputs") / "preview" / f"{preview_id}.glb"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Preview not found")
+    return FileResponse(path, media_type="model/gltf-binary", filename="model.glb")

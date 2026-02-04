@@ -8,7 +8,9 @@ INDEX_HTML = r"""
   <style>
     body { margin:0; font-family: system-ui, -apple-system, sans-serif; background:#000; color:#fff; }
     #wrap { position: relative; width:100vw; height:100vh; overflow:hidden; }
-    video, img { position:absolute; top:0; left:0; width:100%; height:100%; object-fit:cover; }
+    #mirror-wrap { position:absolute; inset:0; width:100%; height:100%; -webkit-transform: scaleX(-1); transform: scaleX(-1); transform-origin: center center; }
+    #mirror-wrap video, #mirror-wrap img { position:absolute; top:0; left:0; width:100%; height:100%; object-fit:cover; }
+    #mirror-wrap #boxes { position:absolute; inset:0; width:100%; height:100%; }
     #boxes { position:absolute; inset:0; pointer-events:none; }
     .box { position:absolute; border:2px solid rgba(255,255,255,0.8); border-radius:6px; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.5); }
     .box.selected { border-color:#00ffcc; }
@@ -20,9 +22,11 @@ INDEX_HTML = r"""
 </head>
 <body>
 <div id="wrap">
-  <video id="video" autoplay playsinline></video>
-  <img id="overlay" />
-  <div id="boxes"></div>
+  <div id="mirror-wrap">
+    <video id="video" autoplay playsinline></video>
+    <img id="overlay" />
+    <div id="boxes"></div>
+  </div>
   <div id="status">Idle</div>
   <div id="ui">
     <select id="style">
@@ -103,8 +107,9 @@ function renderBoxes(){
   boxLayer.innerHTML = '';
   const fit = imageFitMetrics();
   if (!fit) return;
+  const iw = lastImage.w || 1;
   for (const b of lastBoxes) {
-    const x = b.x1 * fit.scale + fit.offsetX;
+    const x = (iw - b.x2) * fit.scale + fit.offsetX;
     const y = b.y1 * fit.scale + fit.offsetY;
     const w = (b.x2 - b.x1) * fit.scale;
     const h = (b.y2 - b.y1) * fit.scale;
@@ -189,22 +194,19 @@ exportBtn.onclick = async () => {
   try {
     const fd = new FormData();
     fd.append('selected_id', String(selectedId));
-    fd.append('format', 'obj');
+    fd.append('format', 'glb');
+    fd.append('preview', '1');
     const res = await fetch('/export_3d', { method: 'POST', body: fd });
     if (!res.ok) {
       const txt = await res.text();
       throw new Error(`HTTP ${res.status}: ${txt.slice(0, 200)}`);
     }
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'model_obj.zip';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-    setStatus("Exported 3D");
+    const data = await res.json();
+    if (data.preview_id) {
+      location.href = '/preview?id=' + data.preview_id;
+      return;
+    }
+    setStatus("Export error: No preview_id");
   } catch (e) {
     console.error(e);
     setStatus("Export error: " + e);
@@ -222,7 +224,8 @@ overlay.addEventListener('click', (ev) => {
   const rect = overlay.getBoundingClientRect();
   const xView = ev.clientX - rect.left;
   const yView = ev.clientY - rect.top;
-  const xImg = (xView - fit.offsetX) / fit.scale;
+  // 좌우반전(거울) 보정: 클릭 좌표를 이미지 좌표로 변환
+  const xImg = lastImage.w - (xView - fit.offsetX) / fit.scale;
   const yImg = (yView - fit.offsetY) / fit.scale;
 
   let hit = null;
@@ -244,6 +247,115 @@ overlay.addEventListener('click', (ev) => {
   }
   renderBoxes();
 });
+</script>
+</body>
+</html>
+"""
+
+PREVIEW_HTML = r"""
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>3D Preview</title>
+  <style>
+    body { margin:0; font-family: system-ui, -apple-system, sans-serif; background:#111; color:#fff; }
+    #preview-canvas { width:100vw; height:100vh; display:block; }
+    #preview-download { position:fixed; right:16px; bottom:16px; padding:12px 14px; font-size:16px; border-radius:12px; border:none; background:#fff; color:#000; font-weight:600; cursor:pointer; z-index:10; }
+    #preview-back { position:fixed; left:16px; top:16px; padding:10px 14px; font-size:14px; border-radius:12px; border:none; background:rgba(255,255,255,0.2); color:#fff; cursor:pointer; z-index:10; }
+    #preview-msg { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; font-size:18px; }
+  </style>
+</head>
+<body>
+<canvas id="preview-canvas"></canvas>
+<button id="preview-download">Download</button>
+<button id="preview-back">Back</button>
+<div id="preview-msg" style="display:none;">No preview</div>
+
+<script type="importmap">
+{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const params = new URLSearchParams(location.search);
+const previewId = params.get('id');
+const msgEl = document.getElementById('preview-msg');
+const canvas = document.getElementById('preview-canvas');
+const downloadBtn = document.getElementById('preview-download');
+const backBtn = document.getElementById('preview-back');
+
+backBtn.onclick = () => { location.href = '/camera'; };
+
+if (!previewId) {
+  msgEl.style.display = 'flex';
+  msgEl.textContent = 'No preview';
+} else {
+  const url = '/preview/file/' + previewId;
+  fetch(url).then(res => {
+    if (!res.ok) throw new Error('Failed to load');
+    return res.blob();
+  }).then(blob => {
+    const objectUrl = URL.createObjectURL(blob);
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x111111);
+    const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 0, 2);
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    const controls = new OrbitControls(camera, canvas);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+    dir.position.set(2, 2, 2);
+    scene.add(dir);
+
+    const loader = new GLTFLoader();
+    loader.load(objectUrl, (gltf) => {
+      const mesh = gltf.scene;
+      const box = new THREE.Box3().setFromObject(mesh);
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+      mesh.position.sub(center);
+      const maxDim = Math.max(size.x, size.y, size.z);
+      const scale = 1.2 / (maxDim || 1);
+      mesh.scale.setScalar(scale);
+      scene.add(mesh);
+    }, undefined, (e) => console.error('GLTF load error:', e));
+
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    downloadBtn.onclick = () => {
+      fetch(url).then(r => r.blob()).then(blob => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'model.glb';
+        a.click();
+        URL.revokeObjectURL(a.href);
+      });
+    };
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  }).catch(e => {
+    msgEl.style.display = 'flex';
+    msgEl.textContent = 'Load error: ' + e.message;
+  });
+}
 </script>
 </body>
 </html>

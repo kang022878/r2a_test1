@@ -1,5 +1,7 @@
 from pathlib import Path
+import shutil
 import time
+import uuid
 
 import cv2
 
@@ -13,7 +15,7 @@ from .image_utils import bgr_to_pil, crop_to_mask, apply_mask_background, refine
 from . import tracking
 
 
-def export_3d_file(selected_id: int, fmt: str = "obj") -> FileResponse:
+def export_3d_file(selected_id: int, fmt: str = "obj", save_for_preview: bool = False):
     track = next((t for t in tracking.TRACKS if t.track_id == selected_id), None)
     if track is None or track.stylized_crop is None:
         raise HTTPException(status_code=404, detail="No stylized crop for selected track")
@@ -54,7 +56,11 @@ def export_3d_file(selected_id: int, fmt: str = "obj") -> FileResponse:
     debug_path = debug_dir / f"export_input_{selected_id}_{int(time.time())}.png"
     cv2.imwrite(str(debug_path), styl_bgr)
 
-    cfg = PipelineConfig(bake_texture=False, foreground_ratio=0.98, preprocess_background="transparent")
+    model_fmt = "glb" if fmt == "glb" else "obj"
+    try:
+        cfg = PipelineConfig(bake_texture=False, foreground_ratio=0.98, model_save_format=model_fmt)
+    except TypeError:
+        cfg = PipelineConfig(bake_texture=False, foreground_ratio=0.98)
     output_dir, _ = run_pipeline(image=bgr_to_pil(styl_bgr), mask=mask_u8, cfg=cfg)
 
     if fmt == "obj":
@@ -64,4 +70,14 @@ def export_3d_file(selected_id: int, fmt: str = "obj") -> FileResponse:
     glb_files = list(Path(output_dir).rglob("*.glb"))
     if not glb_files:
         raise HTTPException(status_code=404, detail="GLB not found")
-    return FileResponse(glb_files[0], media_type="model/gltf-binary", filename=glb_files[0].name)
+    glb_path = glb_files[0]
+
+    if save_for_preview:
+        preview_dir = Path("outputs") / "preview"
+        preview_dir.mkdir(parents=True, exist_ok=True)
+        preview_id = uuid.uuid4().hex
+        dest = preview_dir / f"{preview_id}.glb"
+        shutil.copy2(glb_path, dest)
+        return {"preview_id": preview_id}
+
+    return FileResponse(glb_path, media_type="model/gltf-binary", filename=glb_path.name)
