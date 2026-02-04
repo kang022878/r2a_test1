@@ -84,6 +84,9 @@ def run_pipeline(
             output_path=output_dir / "input_rgba.png",
             size=cfg.input_size,
             background=cfg.preprocess_background,
+            crop_to_mask=True,
+            crop_margin=6,
+            square_pad=True,
         ),
     )
 

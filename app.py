@@ -153,6 +153,7 @@ async def stylize_auto(
                     stylized_crop=None,
                     last_mask_crop=None,
                     last_mask_crop_raw=None,
+                    last_crop_info=None,
                     seed=SEED + tracking.NEXT_TRACK_ID,
                 )
                 tracking.NEXT_TRACK_ID += 1
@@ -300,6 +301,7 @@ async def stylize_auto(
             stylized_crop=None,
             last_mask_crop=None,
             last_mask_crop_raw=None,
+            last_crop_info=None,
             seed=SEED + tracking.NEXT_TRACK_ID,
         )
         tracking.NEXT_TRACK_ID += 1
@@ -338,6 +340,8 @@ async def stylize_auto(
     track.stylized_crop = styl_crop_bgr
     track.last_mask_crop = mask_crop_u8
     track.last_mask_crop_raw = mask_crop_raw_u8
+    x1i, y1i, x2i, y2i, pad_top, pad_left, side = info
+    track.last_crop_info = (pad_top, pad_left, y2i - y1i, x2i - x1i, side, CROP_SIZE)
 
     pasted = paste_back(bgr, styl_crop_bgr, info)
     blended = alpha_blend(bgr, pasted, mask_full, alpha=float(blend_alpha))

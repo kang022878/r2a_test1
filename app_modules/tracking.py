@@ -13,6 +13,7 @@ class Track:
     stylized_crop: object
     last_mask_crop: Optional[object]
     last_mask_crop_raw: Optional[object]
+    last_crop_info: Optional[object]
     seed: int
 
 

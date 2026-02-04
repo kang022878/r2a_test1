@@ -15,6 +15,9 @@ class PreprocessConfig:
     input_is_bgr: bool = False
     foreground_ratio: float = 0.85
     background: str = "transparent"  # "transparent" or "white"
+    crop_to_mask: bool = True
+    crop_margin: int = 6
+    square_pad: bool = True
 
 
 def _to_pil_image(image: Union[str, Path, Image.Image, np.ndarray], input_is_bgr: bool) -> Image.Image:
@@ -66,26 +69,49 @@ def preprocess(
 
     if mask is not None:
         alpha = _to_mask(mask, img.size)
+        if config.crop_to_mask:
+            a = np.array(alpha)
+            ys, xs = np.where(a > 0)
+            if len(xs) > 0 and len(ys) > 0:
+                x1 = max(int(xs.min()) - config.crop_margin, 0)
+                y1 = max(int(ys.min()) - config.crop_margin, 0)
+                x2 = min(int(xs.max()) + config.crop_margin + 1, img.width)
+                y2 = min(int(ys.max()) + config.crop_margin + 1, img.height)
+                img = img.crop((x1, y1, x2, y2))
+                alpha = alpha.crop((x1, y1, x2, y2))
         img.putalpha(alpha)
 
     if config.background != "transparent":
         bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
         bg.alpha_composite(img)
         img = bg
-
-    # Resize to square canvas while keeping aspect ratio
-    target = config.size
-    scale = min(target / img.width, target / img.height)
-    new_w = max(1, int(img.width * scale))
-    new_h = max(1, int(img.height * scale))
-    img_resized = img.resize((new_w, new_h), Image.LANCZOS)
-
-    if config.background == "white":
-        canvas = Image.new("RGBA", (target, target), (255, 255, 255, 255))
     else:
-        canvas = Image.new("RGBA", (target, target), (0, 0, 0, 0))
-    offset = ((target - new_w) // 2, (target - new_h) // 2)
-    canvas.paste(img_resized, offset, img_resized)
+        # If background is transparent, set RGB of transparent pixels to the
+        # object mean color to avoid background color leaking if alpha is ignored.
+        arr = np.array(img)
+        alpha = arr[..., 3]
+        if np.any(alpha > 0):
+            mean_rgb = arr[alpha > 0][:, :3].mean(axis=0)
+            arr[alpha == 0, :3] = mean_rgb.astype(arr.dtype)
+            img = Image.fromarray(arr, mode="RGBA")
 
-    canvas.save(config.output_path)
+    target = config.size
+    if config.square_pad:
+        # Resize to square canvas while keeping aspect ratio
+        scale = min(target / img.width, target / img.height)
+        new_w = max(1, int(img.width * scale))
+        new_h = max(1, int(img.height * scale))
+        img_resized = img.resize((new_w, new_h), Image.LANCZOS)
+
+        if config.background == "white":
+            canvas = Image.new("RGBA", (target, target), (255, 255, 255, 255))
+        else:
+            canvas = Image.new("RGBA", (target, target), (0, 0, 0, 0))
+        offset = ((target - new_w) // 2, (target - new_h) // 2)
+        canvas.paste(img_resized, offset, img_resized)
+        canvas.save(config.output_path)
+    else:
+        # Stretch to square to avoid padding background.
+        img_resized = img.resize((target, target), Image.LANCZOS)
+        img_resized.save(config.output_path)
     return config.output_path

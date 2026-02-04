@@ -23,6 +23,24 @@ def export_3d_file(selected_id: int, fmt: str = "obj") -> FileResponse:
     if mask_u8 is None:
         raise HTTPException(status_code=404, detail="No mask for selected track")
 
+    # Remove reflect padding from the square crop to avoid duplicated content.
+    if track.last_crop_info is not None:
+        pad_top, pad_left, rh, rw, side, out_size = track.last_crop_info
+        if side > 0 and out_size > 0:
+            scale = float(out_size) / float(side)
+            pt = int(round(pad_top * scale))
+            pl = int(round(pad_left * scale))
+            rh_s = int(round(rh * scale))
+            rw_s = int(round(rw * scale))
+            h, w = styl_bgr.shape[:2]
+            y1 = max(0, min(h, pt))
+            x1 = max(0, min(w, pl))
+            y2 = max(0, min(h, y1 + rh_s))
+            x2 = max(0, min(w, x1 + rw_s))
+            if y2 > y1 and x2 > x1:
+                styl_bgr = styl_bgr[y1:y2, x1:x2]
+                mask_u8 = mask_u8[y1:y2, x1:x2]
+
     mask_u8 = refine_mask_for_export(mask_u8, min_area=300, open_px=2, close_px=2)
     mask_u8 = refine_mask_grabcut(styl_bgr, mask_u8, iter_count=2)
 
@@ -36,7 +54,7 @@ def export_3d_file(selected_id: int, fmt: str = "obj") -> FileResponse:
     debug_path = debug_dir / f"export_input_{selected_id}_{int(time.time())}.png"
     cv2.imwrite(str(debug_path), styl_bgr)
 
-    cfg = PipelineConfig(bake_texture=False, foreground_ratio=0.98, preprocess_background="white")
+    cfg = PipelineConfig(bake_texture=False, foreground_ratio=0.98, preprocess_background="transparent")
     output_dir, _ = run_pipeline(image=bgr_to_pil(styl_bgr), mask=mask_u8, cfg=cfg)
 
     if fmt == "obj":
