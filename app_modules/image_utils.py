@@ -174,3 +174,34 @@ def refine_mask_for_export(
         k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_px * 2 + 1, close_px * 2 + 1))
         m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, k, iterations=1)
     return (m * 255).astype(np.uint8)
+
+
+def refine_mask_grabcut(img_bgr: np.ndarray, mask_u8: np.ndarray, iter_count: int = 2) -> np.ndarray:
+    if mask_u8 is None:
+        return mask_u8
+    if img_bgr is None or img_bgr.size == 0:
+        return mask_u8
+    if mask_u8.shape[:2] != img_bgr.shape[:2]:
+        mask_u8 = cv2.resize(mask_u8, (img_bgr.shape[1], img_bgr.shape[0]), interpolation=cv2.INTER_NEAREST)
+
+    m = (mask_u8 > 127).astype(np.uint8)
+    if m.sum() == 0:
+        return mask_u8
+
+    # Build sure FG/BG from the mask and let GrabCut refine the boundary.
+    k_fg = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    k_bg = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+    sure_fg = cv2.erode(m, k_fg, iterations=2)
+    sure_bg = cv2.dilate(1 - m, k_bg, iterations=2)
+
+    gc_mask = np.full(m.shape, cv2.GC_PR_BGD, dtype=np.uint8)
+    gc_mask[m == 1] = cv2.GC_PR_FGD
+    gc_mask[sure_fg == 1] = cv2.GC_FGD
+    gc_mask[sure_bg == 1] = cv2.GC_BGD
+
+    bgd = np.zeros((1, 65), np.float64)
+    fgd = np.zeros((1, 65), np.float64)
+    cv2.grabCut(img_bgr, gc_mask, None, bgd, fgd, iter_count, mode=cv2.GC_INIT_WITH_MASK)
+
+    out = np.where((gc_mask == cv2.GC_FGD) | (gc_mask == cv2.GC_PR_FGD), 1, 0).astype(np.uint8)
+    return (out * 255).astype(np.uint8)

@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse
 from image2mesh.pipeline import run_pipeline, PipelineConfig
 from image2mesh.export import package_obj
 
-from .image_utils import bgr_to_pil, crop_to_mask, apply_mask_background, refine_mask_for_export
+from .image_utils import bgr_to_pil, crop_to_mask, apply_mask_background, refine_mask_for_export, refine_mask_grabcut
 from . import tracking
 
 
@@ -21,6 +21,7 @@ def export_3d_file(selected_id: int, fmt: str = "obj") -> FileResponse:
         raise HTTPException(status_code=404, detail="No mask for selected track")
 
     mask_u8 = refine_mask_for_export(mask_u8, min_area=300, open_px=2, close_px=2)
+    mask_u8 = refine_mask_grabcut(styl_bgr, mask_u8, iter_count=2)
 
     # Tight-crop to the actual mask so the exported mesh only contains the object.
     styl_bgr, mask_u8 = crop_to_mask(styl_bgr, mask_u8, margin=1)
