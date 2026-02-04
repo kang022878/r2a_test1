@@ -1,12 +1,14 @@
 import base64
 import os
 import time
+from pathlib import Path
 from typing import Optional
 
 import cv2
 import numpy as np
 from fastapi import FastAPI, UploadFile, File, Form
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app_modules import tracking
 from app_modules.config import (
@@ -54,6 +56,11 @@ def stabilize_stylized(prev_bgr: np.ndarray, curr_bgr: np.ndarray, mask_u8: np.n
 app = FastAPI()
 yolo, ghibli_engine = load_models()
 
+WEB_DIST = Path(__file__).resolve().parent / "web" / "dist"
+ASSETS_DIR = WEB_DIST / "assets"
+if ASSETS_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
+
 
 @app.get("/ip")
 def get_ip():
@@ -65,6 +72,16 @@ def get_ip():
 
 @app.get("/", response_class=HTMLResponse)
 def index():
+    index_html = WEB_DIST / "index.html"
+    if index_html.exists():
+        return FileResponse(index_html)
+    return HTMLResponse(
+        "<h1>Frontend not built</h1><p>Run: cd web && npm install && npm run build</p>"
+    )
+
+
+@app.get("/camera", response_class=HTMLResponse)
+def camera():
     return INDEX_HTML
 
 
