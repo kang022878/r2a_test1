@@ -1,4 +1,3 @@
-import React from "react"
 import { FinancialHero } from "@/components/ui/hero-section"
 
 const FinancialHeroDemo = () => {
