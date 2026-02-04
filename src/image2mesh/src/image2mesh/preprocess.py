@@ -80,7 +80,10 @@ def preprocess(
     new_h = max(1, int(img.height * scale))
     img_resized = img.resize((new_w, new_h), Image.LANCZOS)
 
-    canvas = Image.new("RGBA", (target, target), (0, 0, 0, 0))
+    if config.background == "white":
+        canvas = Image.new("RGBA", (target, target), (255, 255, 255, 255))
+    else:
+        canvas = Image.new("RGBA", (target, target), (0, 0, 0, 0))
     offset = ((target - new_w) // 2, (target - new_h) // 2)
     canvas.paste(img_resized, offset, img_resized)
 

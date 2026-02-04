@@ -1,4 +1,7 @@
 from pathlib import Path
+import time
+
+import cv2
 
 from fastapi import HTTPException
 from fastapi.responses import FileResponse
@@ -27,7 +30,13 @@ def export_3d_file(selected_id: int, fmt: str = "obj") -> FileResponse:
     styl_bgr, mask_u8 = crop_to_mask(styl_bgr, mask_u8, margin=1)
     styl_bgr = apply_mask_background(styl_bgr, mask_u8)
 
-    cfg = PipelineConfig(bake_texture=False)
+    # Debug: save the exact image fed to the 3D pipeline.
+    debug_dir = Path("outputs")
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    debug_path = debug_dir / f"export_input_{selected_id}_{int(time.time())}.png"
+    cv2.imwrite(str(debug_path), styl_bgr)
+
+    cfg = PipelineConfig(bake_texture=False, foreground_ratio=0.98, preprocess_background="white")
     output_dir, _ = run_pipeline(image=bgr_to_pil(styl_bgr), mask=mask_u8, cfg=cfg)
 
     if fmt == "obj":

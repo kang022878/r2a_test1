@@ -20,6 +20,7 @@ class PipelineConfig:
     model_save_format: str = os.getenv("TRIPOSR_MODEL_FORMAT", "obj")
     input_size: int = int(os.getenv("TRIPOSR_INPUT_SIZE", "768"))
     foreground_ratio: Optional[float] = 0.85
+    preprocess_background: str = os.getenv("TRIPOSR_PREPROCESS_BG", "white")
     tripo_dir: Path = Path("vendor/TripoSR")
 
 
@@ -82,6 +83,7 @@ def run_pipeline(
         config=PreprocessConfig(
             output_path=output_dir / "input_rgba.png",
             size=cfg.input_size,
+            background=cfg.preprocess_background,
         ),
     )
 
