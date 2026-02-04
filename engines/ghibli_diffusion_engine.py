@@ -52,8 +52,9 @@ class GhibliDiffusionEngine(BaseStyleEngine):
         self._first_gen_embeds = None  # 첫 스타일 결과 인코딩 (이후 일관성용)
 
         self._default_prompt = (
-            "ghibli style, cute anime character, fantasy character, illustrated character, "
-            "soft features, expressive eyes, kawaii, stylized portrait, "
+            "ghibli style , cute anime character, fantasy character, illustrated character"
+            "black hair"
+            "soft features, expressive eyes, kawaii, stylized portrait"
             "studio ghibli character design, whimsical"
         )
         self._default_negative_prompt = (

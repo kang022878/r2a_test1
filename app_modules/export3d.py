@@ -75,9 +75,16 @@ def export_3d_file(selected_id: int, fmt: str = "obj", save_for_preview: bool = 
     if save_for_preview:
         preview_dir = Path("outputs") / "preview"
         preview_dir.mkdir(parents=True, exist_ok=True)
+        counter_file = preview_dir / "next_num.txt"
+        try:
+            n = int(counter_file.read_text().strip()) if counter_file.exists() else 1
+        except (ValueError, OSError):
+            n = 1
+        download_filename = f"{n}.glb"
+        counter_file.write_text(str(n + 1))
         preview_id = uuid.uuid4().hex
         dest = preview_dir / f"{preview_id}.glb"
         shutil.copy2(glb_path, dest)
-        return {"preview_id": preview_id}
+        return {"preview_id": preview_id, "download_filename": download_filename}
 
     return FileResponse(glb_path, media_type="model/gltf-binary", filename=glb_path.name)

@@ -8,7 +8,7 @@ INDEX_HTML = r"""
   <style>
     body { margin:0; font-family: system-ui, -apple-system, sans-serif; background:#000; color:#fff; }
     #wrap { position: relative; width:100vw; height:100vh; overflow:hidden; }
-    #mirror-wrap { position:absolute; inset:0; width:100%; height:100%; -webkit-transform: scaleX(-1); transform: scaleX(-1); transform-origin: center center; }
+    #mirror-wrap { position:absolute; inset:0; width:100%; height:100%; transform: scaleX(-1); }
     #mirror-wrap video, #mirror-wrap img { position:absolute; top:0; left:0; width:100%; height:100%; object-fit:cover; }
     #mirror-wrap #boxes { position:absolute; inset:0; width:100%; height:100%; }
     #boxes { position:absolute; inset:0; pointer-events:none; }
@@ -109,7 +109,7 @@ function renderBoxes(){
   if (!fit) return;
   const iw = lastImage.w || 1;
   for (const b of lastBoxes) {
-    const x = (iw - b.x2) * fit.scale + fit.offsetX;
+    const x = b.x1 * fit.scale + fit.offsetX;
     const y = b.y1 * fit.scale + fit.offsetY;
     const w = (b.x2 - b.x1) * fit.scale;
     const h = (b.y2 - b.y1) * fit.scale;
@@ -203,7 +203,9 @@ exportBtn.onclick = async () => {
     }
     const data = await res.json();
     if (data.preview_id) {
-      location.href = '/preview?id=' + data.preview_id;
+      let q = '/preview?id=' + data.preview_id;
+      if (data.download_filename) q += '&filename=' + encodeURIComponent(data.download_filename);
+      location.href = q;
       return;
     }
     setStatus("Export error: No preview_id");
@@ -224,7 +226,6 @@ overlay.addEventListener('click', (ev) => {
   const rect = overlay.getBoundingClientRect();
   const xView = ev.clientX - rect.left;
   const yView = ev.clientY - rect.top;
-  // 좌우반전(거울) 보정: 클릭 좌표를 이미지 좌표로 변환
   const xImg = lastImage.w - (xView - fit.offsetX) / fit.scale;
   const yImg = (yView - fit.offsetY) / fit.scale;
 
@@ -262,8 +263,8 @@ PREVIEW_HTML = r"""
   <style>
     body { margin:0; font-family: system-ui, -apple-system, sans-serif; background:#111; color:#fff; }
     #preview-canvas { width:100vw; height:100vh; display:block; }
-    #preview-download { position:fixed; right:16px; bottom:16px; padding:12px 14px; font-size:16px; border-radius:12px; border:none; background:#fff; color:#000; font-weight:600; cursor:pointer; z-index:10; }
-    #preview-back { position:fixed; left:16px; top:16px; padding:10px 14px; font-size:14px; border-radius:12px; border:none; background:rgba(255,255,255,0.2); color:#fff; cursor:pointer; z-index:10; }
+    #preview-download { position:fixed; right:16px; bottom:16px; padding:12px 14px; font-size:16px; border-radius:12px; border:none; background:#000; color:#fff; font-weight:600; cursor:pointer; z-index:10; }
+    #preview-back { position:fixed; left:16px; top:16px; padding:10px 14px; font-size:14px; border-radius:12px; border:none; background:#000; color:#fff; cursor:pointer; z-index:10; }
     #preview-msg { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; font-size:18px; }
   </style>
 </head>
@@ -283,6 +284,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 const params = new URLSearchParams(location.search);
 const previewId = params.get('id');
+const downloadFilename = params.get('filename') || 'model.glb';
 const msgEl = document.getElementById('preview-msg');
 const canvas = document.getElementById('preview-canvas');
 const downloadBtn = document.getElementById('preview-download');
@@ -301,7 +303,7 @@ if (!previewId) {
   }).then(blob => {
     const objectUrl = URL.createObjectURL(blob);
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x111111);
+    scene.background = new THREE.Color(0xffffff);
     const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
     camera.position.set(0, 0, 2);
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -311,14 +313,22 @@ if (!previewId) {
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-    const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 1.0));
+    const dir = new THREE.DirectionalLight(0xffffff, 1.0);
     dir.position.set(2, 2, 2);
     scene.add(dir);
 
     const loader = new GLTFLoader();
     loader.load(objectUrl, (gltf) => {
       const mesh = gltf.scene;
+      mesh.traverse((child) => {
+        if (child.isMesh && child.material) {
+          const m = child.material;
+          if (m.color) m.color.multiplyScalar(1.4);
+          if (m.map) m.map.encoding = THREE.sRGBEncoding;
+        }
+      });
       const box = new THREE.Box3().setFromObject(mesh);
       const center = box.getCenter(new THREE.Vector3());
       const size = box.getSize(new THREE.Vector3());
@@ -326,6 +336,7 @@ if (!previewId) {
       const maxDim = Math.max(size.x, size.y, size.z);
       const scale = 1.2 / (maxDim || 1);
       mesh.scale.setScalar(scale);
+      mesh.rotateZ(-Math.PI / 2);
       scene.add(mesh);
     }, undefined, (e) => console.error('GLTF load error:', e));
 
@@ -340,7 +351,7 @@ if (!previewId) {
       fetch(url).then(r => r.blob()).then(blob => {
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = 'model.glb';
+        a.download = downloadFilename;
         a.click();
         URL.revokeObjectURL(a.href);
       });

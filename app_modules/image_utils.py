@@ -103,13 +103,13 @@ def pixelate_bgr(img_bgr: np.ndarray, scale: float = 0.12) -> np.ndarray:
 
 
 def toon_bgr(img_bgr: np.ndarray) -> np.ndarray:
-    color = cv2.bilateralFilter(img_bgr, d=7, sigmaColor=75, sigmaSpace=75)
+    """Toon style: original image with black edges overlaid. No blur, face stays sharp."""
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     edges = cv2.Canny(gray, 80, 120)
     edges = cv2.dilate(edges, np.ones((2, 2), np.uint8), iterations=1)
     edges_inv = cv2.bitwise_not(edges)
     edges_inv = cv2.cvtColor(edges_inv, cv2.COLOR_GRAY2BGR)
-    return cv2.bitwise_and(color, edges_inv)
+    return cv2.bitwise_and(img_bgr, edges_inv)
 
 
 def fallback_stylize(img_bgr: np.ndarray, style: str) -> np.ndarray:
