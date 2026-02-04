@@ -47,13 +47,14 @@ class GhibliDiffusionEngine(BaseStyleEngine):
 
         self._pipe = None
         self._default_prompt = (
-            "ghibli style, anime, high quality, detailed, "
-            "detailed eyes, clear eyes, expressive eyes, well-defined eyes"
+            "ghibli style, cute anime character, fantasy character, illustrated character, "
+            "soft features, expressive eyes, kawaii, stylized portrait, "
+            "studio ghibli character design, whimsical"
         )
         self._default_negative_prompt = (
-            "ugly, blurry, low quality, distorted, deformed, "
+            "ugly, blurry, low quality, distorted, deformed, realistic, photograph, "
             "bad eyes, deformed eyes, blurry eyes, missing eyes, asymmetric eyes, poorly drawn eyes, "
-            "different background, changed background, altered background, different scene"
+            "same as photo, copy of photo, photorealistic"
         )
 
     @property

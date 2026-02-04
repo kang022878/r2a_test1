@@ -151,7 +151,7 @@ async function tick(){
 
     const t = data.timings_ms || {};
     const timingStr = Object.keys(t).length
-      ? ` | 읽기 ${t.read || 0} 디코드 ${t.decode || 0} 검출 ${t.detect || 0} 스타일 ${t.sdxl || 0} 인코딩 ${t.jpeg || 0} (ms)`
+      ? ` | 읽기 ${t.read || 0} 디코드 ${t.decode || 0} 검출 ${t.detect || 0} 스타일 ${t.ghibli || t.sdxl || 0} 인코딩 ${t.jpeg || 0} (ms)`
       : '';
     if (data.ok) {
       setStatus(`OK | ${dt}ms | det=${data.detected} | ${data.class_name || ''}${timingStr}`);

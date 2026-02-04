@@ -42,12 +42,13 @@ from app_modules.ui import INDEX_HTML
 from app_modules.export3d import export_3d_file
 
 
-def stabilize_stylized(prev_bgr: np.ndarray, curr_bgr: np.ndarray, mask_u8: np.ndarray, alpha_prev: float):
+def stabilize_stylized(prev_bgr: np.ndarray, curr_bgr: np.ndarray, mask_u8: np.ndarray, alpha_curr: float):
+    """Blend prev/curr inside mask. alpha_curr = weight of current frame (e.g. 0.7 = 70% current, 30% prev)."""
     if prev_bgr is None:
         return curr_bgr
     m = (mask_u8.astype(np.float32) / 255.0)[..., None]
     out = curr_bgr.astype(np.float32)
-    out = out * (1.0 - m) + (prev_bgr.astype(np.float32) * alpha_prev + curr_bgr.astype(np.float32) * (1.0 - alpha_prev)) * m
+    out = out * (1.0 - m) + (prev_bgr.astype(np.float32) * (1.0 - alpha_curr) + curr_bgr.astype(np.float32) * alpha_curr) * m
     return np.clip(out, 0, 255).astype(np.uint8)
 
 app = FastAPI()
@@ -321,10 +322,9 @@ async def stylize_auto(
         t_gen1 = time.perf_counter()
     else:
         try:
+            # Ghibli engine: always use engine default prompt/negative_prompt (ghibli style, eyes, etc.)
             jpeg_bytes = ghibli_engine.stylize(
                 content_image=bgr_to_pil(masked_crop),
-                prompt=prompt,
-                negative_prompt=negative,
                 seed=track.seed,
             )
             nparr = np.frombuffer(jpeg_bytes, np.uint8)
