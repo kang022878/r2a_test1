@@ -29,7 +29,7 @@ httpx==0.28.1
 huggingface-hub==0.25.2
 humanfriendly==10.0
 idna==3.11
--e git+ssh://git@github.com/kang022878/r2a_test1.git@a7b8cda2c38dc41656bf4bcae890901cb889ca4f#egg=image2mesh&subdirectory=src/image2mesh
+-e git+ssh://git@github.com/kang022878/r2a_test1.git@009a1008695991889e68913df682010e91fca30b#egg=image2mesh&subdirectory=src/image2mesh
 ImageIO==2.37.2
 imageio-ffmpeg==0.6.0
 importlib_metadata==8.7.1
