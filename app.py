@@ -5,7 +5,6 @@ from typing import Optional
 
 import cv2
 import numpy as np
-import torch
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, JSONResponse
 
@@ -25,6 +24,7 @@ from app_modules.config import (
     MIN_MASK_PIXELS,
     STYLE_PRESETS,
     STABILIZE_ALPHA,
+    TRACK_TTL_SEC,
 )
 from app_modules.image_utils import (
     decode_upload_to_bgr,
@@ -34,6 +34,7 @@ from app_modules.image_utils import (
     crop_square_gray,
     paste_back,
     fallback_stylize,
+    bgr_to_pil,
 )
 from app_modules.models import load_models
 from app_modules.net import get_local_ip
@@ -50,7 +51,7 @@ def stabilize_stylized(prev_bgr: np.ndarray, curr_bgr: np.ndarray, mask_u8: np.n
     return np.clip(out, 0, 255).astype(np.uint8)
 
 app = FastAPI()
-yolo, pipe = load_models()
+yolo, ghibli_engine = load_models()
 
 
 @app.get("/ip")
@@ -73,7 +74,7 @@ async def stylize_auto(
     blend_alpha: float = Form(1.0),
     selected_id: Optional[int] = Form(None),
 ):
-    global yolo, pipe
+    global yolo, ghibli_engine
     boxes = []
     if style not in STYLE_PRESETS:
         style = "ghibli"
@@ -306,7 +307,6 @@ async def stylize_auto(
     track.last_seen = now_ts
     track.bbox = (x1, y1, x2, y2)
 
-    g = torch.Generator(device=DEVICE).manual_seed(track.seed)
     negative = NEGATIVE_BASE
     if class_name not in ("person", "people"):
         negative = negative + ", human, person, face, body, character"
@@ -321,17 +321,16 @@ async def stylize_auto(
         t_gen1 = time.perf_counter()
     else:
         try:
-            out_pil = pipe(
+            jpeg_bytes = ghibli_engine.stylize(
+                content_image=bgr_to_pil(masked_crop),
                 prompt=prompt,
                 negative_prompt=negative,
-                image=bgr_to_pil(masked_crop),
-                strength=float(STRENGTH),
-                guidance_scale=float(CFG),
-                num_inference_steps=int(STEPS),
-                num_images_per_prompt=1,
-                generator=g,
-            ).images[0]
-            styl_crop_bgr = cv2.cvtColor(np.array(out_pil.convert("RGB")), cv2.COLOR_RGB2BGR)
+                seed=track.seed,
+            )
+            nparr = np.frombuffer(jpeg_bytes, np.uint8)
+            styl_crop_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if styl_crop_bgr is None:
+                raise RuntimeError("Ghibli engine decode failed")
         except RuntimeError:
             styl_crop_bgr = fallback_stylize(masked_crop, style)
         t_gen1 = time.perf_counter()
@@ -360,7 +359,7 @@ async def stylize_auto(
             "read": round((t_read - t_req0) * 1000, 1),
             "decode": round((t_decode - t_read) * 1000, 1),
             "detect": round((t_det1 - t_det0) * 1000, 1) if run_detect else 0.0,
-            "sdxl": round((t_gen1 - t_gen0) * 1000, 1),
+            "ghibli": round((t_gen1 - t_gen0) * 1000, 1),
             "jpeg": round((t_jpg - t_gen1) * 1000, 1),
         },
     })
