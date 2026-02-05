@@ -1,6 +1,9 @@
 # 프로젝트 이름
 Ghibli Camera 3D
 
+# 팀원
+강서현 (KAIST 전산학부 23), 이진형 (KAIST 전산학부 24)
+
 # 프로젝트 설명
 한 줄 소개: 카메라로 비춘 피사체를 AI로 스타일링하고 즉시 3D 에셋으로 변환하는 실시간 웹 앱.
 슬로건: Point it. Restyle it. Export it.
