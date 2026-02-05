@@ -4,7 +4,7 @@
 GHIBLI_DEFAULT_KWARGS = {
     "content_size": 512,
     "controlnet_scale": 0.9,
-    "guidance_scale": 2.0,       # Form 1.0 → 엔진 내부에서 2.0으로 올림
+    "guidance_scale": 1.0,       # Form 1.0 → 엔진 내부에서 2.0으로 올림
     "num_inference_steps": 6,
     "strength": 0.9,
     "canny_low": 100,
