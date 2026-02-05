@@ -4,19 +4,17 @@ const DEMO_ITEMS: FocusRailItem[] = [
   {
     id: 1,
     title: "Detect it",
-    description: "- automatically",
+    description: "— automatically",
     meta: "No 1.",
-    imageSrc:
-      "https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?q=80&w=1000&auto=format&fit=crop",
+    imageSrc: "/image1.png",
     href: "/camera",
   },
   {
     id: 2,
     title: "Restyle it with AI",
-    description: "- intelligently",
+    description: "— intelligently",
     meta: "No 2.",
-    imageSrc:
-      "https://images.unsplash.com/photo-1470770841072-f978cf4d019e?q=80&w=1000&auto=format&fit=crop",
+    imageSrc: "/image2.png",
     href: "/camera",
   },
   {
@@ -24,8 +22,7 @@ const DEMO_ITEMS: FocusRailItem[] = [
     title: "Turn it into a ready-to-use 3D asset",
     description: "— instantly",
     meta: "No 3.",
-    imageSrc:
-      "https://images.unsplash.com/photo-1509316975850-ff9c5deb0cd9?q=80&w=1000&auto=format&fit=crop",
+    imageSrc: "/image3.png",
     href: "/camera",
   },
 ]
