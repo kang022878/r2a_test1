@@ -18,6 +18,18 @@ INDEX_HTML = r"""
     button, select { padding:12px 14px; font-size:16px; border-radius:12px; border:none; }
     button { background:#fff; color:#000; font-weight:600; }
     #status { position:absolute; top:12px; left:12px; background:rgba(0,0,0,0.6); padding:8px 10px; border-radius:10px; font-size:13px; }
+    #loading-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.6); display:none; align-items:center; justify-content:center; z-index:20; }
+    .loading-wrap { display:flex; flex-direction:column; align-items:center; gap:12px; color:#fff; font-size:16px; }
+    .morph-spinner { position:relative; width:48px; height:48px; }
+    .morph-spinner::before { content:""; position:absolute; inset:0; background:#fff; animation:smoothMorph 3s ease-in-out infinite; }
+    @keyframes smoothMorph {
+      0% { transform: scale(1) rotate(0deg); border-radius: 50%; }
+      20% { transform: scale(0.9) rotate(72deg); border-radius: 35%; }
+      40% { transform: scale(1.1) rotate(144deg); border-radius: 15%; }
+      60% { transform: scale(0.85) rotate(216deg); border-radius: 8%; }
+      80% { transform: scale(1.05) rotate(288deg); border-radius: 25%; }
+      100% { transform: scale(1) rotate(360deg); border-radius: 50%; }
+    }
   </style>
 </head>
 <body>
@@ -39,6 +51,12 @@ INDEX_HTML = r"""
     <button id="export3d">Export 3D</button>
   </div>
 </div>
+<div id="loading-overlay">
+  <div class="loading-wrap">
+    <div class="morph-spinner"></div>
+    <div id="loading-text">Loading...</div>
+  </div>
+</div>
 
 <script>
 const video = document.getElementById('video');
@@ -46,6 +64,8 @@ const overlay = document.getElementById('overlay');
 const statusEl = document.getElementById('status');
 const styleSel = document.getElementById('style');
 const exportBtn = document.getElementById('export3d');
+const loadingOverlay = document.getElementById('loading-overlay');
+const loadingText = document.getElementById('loading-text');
 
 const canvas = document.createElement('canvas');
 const ctx = canvas.getContext('2d');
@@ -61,6 +81,10 @@ let lastBoxes = [];
 let lastImage = { w: 0, h: 0 };
 
 function setStatus(s){ statusEl.textContent = s; }
+function setLoading(on, text){
+  if (text) loadingText.textContent = text;
+  loadingOverlay.style.display = on ? 'flex' : 'none';
+}
 
 async function setupCamera(){
   const stream = await navigator.mediaDevices.getUserMedia({
@@ -191,6 +215,7 @@ exportBtn.onclick = async () => {
   }
   exportBtn.disabled = true;
   setStatus("Exporting 3D...");
+  setLoading(true, "Exporting 3D...");
   try {
     const fd = new FormData();
     fd.append('selected_id', String(selectedId));
@@ -207,9 +232,11 @@ exportBtn.onclick = async () => {
       return;
     }
     setStatus("Export error: No preview_id");
+    setLoading(false);
   } catch (e) {
     console.error(e);
     setStatus("Export error: " + e);
+    setLoading(false);
   } finally {
     exportBtn.disabled = false;
   }
@@ -264,6 +291,18 @@ PREVIEW_HTML = r"""
     #preview-download { position:fixed; right:16px; bottom:16px; padding:12px 14px; font-size:16px; border-radius:12px; border:none; background:#000; color:#fff; font-weight:600; cursor:pointer; z-index:10; }
     #preview-back { position:fixed; left:16px; top:16px; padding:10px 14px; font-size:14px; border-radius:12px; border:none; background:#000; color:#fff; cursor:pointer; z-index:10; }
     #preview-msg { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; font-size:18px; }
+    #preview-loading { position:fixed; inset:0; background:rgba(0,0,0,0.55); display:none; align-items:center; justify-content:center; z-index:20; }
+    .loading-wrap { display:flex; flex-direction:column; align-items:center; gap:12px; color:#fff; font-size:16px; }
+    .morph-spinner { position:relative; width:48px; height:48px; }
+    .morph-spinner::before { content:""; position:absolute; inset:0; background:#fff; animation:smoothMorph 3s ease-in-out infinite; }
+    @keyframes smoothMorph {
+      0% { transform: scale(1) rotate(0deg); border-radius: 50%; }
+      20% { transform: scale(0.9) rotate(72deg); border-radius: 35%; }
+      40% { transform: scale(1.1) rotate(144deg); border-radius: 15%; }
+      60% { transform: scale(0.85) rotate(216deg); border-radius: 8%; }
+      80% { transform: scale(1.05) rotate(288deg); border-radius: 25%; }
+      100% { transform: scale(1) rotate(360deg); border-radius: 50%; }
+    }
   </style>
 </head>
 <body>
@@ -271,6 +310,12 @@ PREVIEW_HTML = r"""
 <button id="preview-download">Download</button>
 <button id="preview-back">Back</button>
 <div id="preview-msg" style="display:none;">No preview</div>
+<div id="preview-loading">
+  <div class="loading-wrap">
+    <div class="morph-spinner"></div>
+    <div id="preview-loading-text">Loading...</div>
+  </div>
+</div>
 
 <script type="importmap">
 {"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}
@@ -286,6 +331,13 @@ const msgEl = document.getElementById('preview-msg');
 const canvas = document.getElementById('preview-canvas');
 const downloadBtn = document.getElementById('preview-download');
 const backBtn = document.getElementById('preview-back');
+const loadingEl = document.getElementById('preview-loading');
+const loadingText = document.getElementById('preview-loading-text');
+
+function setLoading(on, text){
+  if (text) loadingText.textContent = text;
+  loadingEl.style.display = on ? 'flex' : 'none';
+}
 
 backBtn.onclick = () => { location.href = '/camera'; };
 
@@ -294,6 +346,7 @@ if (!previewId) {
   msgEl.textContent = 'No preview';
 } else {
   const url = '/preview/file/' + previewId;
+  setLoading(true, "Loading preview...");
   fetch(url).then(res => {
     if (!res.ok) throw new Error('Failed to load');
     return res.blob();
@@ -362,6 +415,7 @@ if (!previewId) {
       mesh.rotation.z = -Math.PI / 2;
 
       scene.add(mesh);
+      setLoading(false);
     }, undefined, (e) => console.error('GLTF load error:', e));
 
     function animate() {
@@ -372,13 +426,17 @@ if (!previewId) {
     animate();
 
     downloadBtn.onclick = () => {
-      fetch(url).then(r => r.blob()).then(blob => {
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = 'model.glb';
-        a.click();
-        URL.revokeObjectURL(a.href);
-      });
+      setLoading(true, "Preparing download...");
+      fetch(url)
+        .then(r => r.blob())
+        .then(blob => {
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = 'model.glb';
+          a.click();
+          URL.revokeObjectURL(a.href);
+        })
+        .finally(() => setLoading(false));
     };
 
     window.addEventListener('resize', () => {
@@ -389,6 +447,7 @@ if (!previewId) {
   }).catch(e => {
     msgEl.style.display = 'flex';
     msgEl.textContent = 'Load error: ' + e.message;
+    setLoading(false);
   });
 }
 </script>
