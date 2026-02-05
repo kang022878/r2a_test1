@@ -203,9 +203,7 @@ exportBtn.onclick = async () => {
     }
     const data = await res.json();
     if (data.preview_id) {
-      let q = '/preview?id=' + data.preview_id;
-      if (data.download_filename) q += '&filename=' + encodeURIComponent(data.download_filename);
-      location.href = q;
+      location.href = '/preview?id=' + data.preview_id;
       return;
     }
     setStatus("Export error: No preview_id");
@@ -284,7 +282,6 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 const params = new URLSearchParams(location.search);
 const previewId = params.get('id');
-const downloadFilename = params.get('filename') || 'model.glb';
 const msgEl = document.getElementById('preview-msg');
 const canvas = document.getElementById('preview-canvas');
 const downloadBtn = document.getElementById('preview-download');
@@ -306,27 +303,50 @@ if (!previewId) {
     scene.background = new THREE.Color(0xffffff);
     const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
     camera.position.set(0, 0, 2);
-    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    if (typeof renderer.outputColorSpace !== 'undefined') renderer.outputColorSpace = THREE.SRGBColorSpace;
+    else renderer.outputEncoding = THREE.sRGBEncoding;
+    // Disable tone mapping to preserve original vertex colors
+    renderer.toneMapping = THREE.NoToneMapping;
     const controls = new OrbitControls(camera, canvas);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.8));
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 1.0));
-    const dir = new THREE.DirectionalLight(0xffffff, 1.0);
-    dir.position.set(2, 2, 2);
-    scene.add(dir);
+    // Balanced lighting from multiple directions
+    scene.add(new THREE.AmbientLight(0xffffff, 2.0));
+    scene.add(new THREE.HemisphereLight(0xffffff, 0xffffff, 1.0));
+    // Multiple directional lights for even illumination
+    const lightPositions = [
+      [3, 3, 3], [-3, 3, 3], [3, 3, -3], [-3, 3, -3],
+      [0, -3, 0], [3, -1, 3], [-3, -1, -3]
+    ];
+    lightPositions.forEach(pos => {
+      const light = new THREE.DirectionalLight(0xffffff, 0.5);
+      light.position.set(pos[0], pos[1], pos[2]);
+      scene.add(light);
+    });
 
     const loader = new GLTFLoader();
     loader.load(objectUrl, (gltf) => {
       const mesh = gltf.scene;
       mesh.traverse((child) => {
-        if (child.isMesh && child.material) {
-          const m = child.material;
-          if (m.color) m.color.multiplyScalar(1.4);
-          if (m.map) m.map.encoding = THREE.sRGBEncoding;
+        if (!child.isMesh || !child.material) return;
+        const geom = child.geometry;
+        const hasVertexColors = geom && geom.attributes && geom.attributes.color;
+        
+        // Set vertex colors to sRGB color space (trimesh exports sRGB but GLTF assumes linear)
+        if (hasVertexColors) {
+          const colorAttr = geom.attributes.color;
+          if (typeof colorAttr.colorSpace !== 'undefined') {
+            colorAttr.colorSpace = THREE.SRGBColorSpace;
+          }
+          // Replace material with MeshBasicMaterial to show vertex colors directly without lighting
+          child.material = new THREE.MeshBasicMaterial({
+            vertexColors: true,
+            side: THREE.DoubleSide
+          });
         }
       });
       const box = new THREE.Box3().setFromObject(mesh);
@@ -336,7 +356,8 @@ if (!previewId) {
       const maxDim = Math.max(size.x, size.y, size.z);
       const scale = 1.2 / (maxDim || 1);
       mesh.scale.setScalar(scale);
-      mesh.rotateZ(-Math.PI / 2);
+      // Rotate to stand character upright and face camera
+      mesh.rotation.set(0, Math.PI, -Math.PI / 2);
       scene.add(mesh);
     }, undefined, (e) => console.error('GLTF load error:', e));
 
@@ -351,7 +372,7 @@ if (!previewId) {
       fetch(url).then(r => r.blob()).then(blob => {
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = downloadFilename;
+        a.download = 'model.glb';
         a.click();
         URL.revokeObjectURL(a.href);
       });
