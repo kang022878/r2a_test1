@@ -410,7 +410,9 @@ if (!previewId) {
       const scale = 1.2 / (maxDim || 1);
       mesh.scale.setScalar(scale);
       // Rotate to stand character upright and face camera
-      mesh.rotation.set(0, Math.PI / 2, -Math.PI / 2);
+      mesh.rotation.x = - Math.PI / 2;
+      // mesh.rotation.y = Math.PI / 2;
+      mesh.rotation.z = -Math.PI / 2;
       scene.add(mesh);
       setLoading(false);
     }, undefined, (e) => console.error('GLTF load error:', e));
