@@ -42,7 +42,7 @@ INDEX_HTML = r"""
   <div id="status">Idle</div>
   <div id="ui">
     <select id="style">
-      <option value="ghibli">Ghibli-ish</option>
+      <option value="ghibli">Ghibli</option>
       <option value="pixel">Pixel</option>
       <option value="toon">Toon</option>
     </select>
