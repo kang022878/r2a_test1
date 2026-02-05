@@ -1,23 +1,46 @@
-import { FinancialHero } from "@/components/ui/hero-section"
+import { FocusRail, type FocusRailItem } from "@/components/ui/focus-rail"
 
-const FinancialHeroDemo = () => {
+const DEMO_ITEMS: FocusRailItem[] = [
+  {
+    id: 1,
+    title: "Detect it",
+    description: "- automatically",
+    meta: "No 1.",
+    imageSrc:
+      "https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?q=80&w=1000&auto=format&fit=crop",
+    href: "/camera",
+  },
+  {
+    id: 2,
+    title: "Restyle it with AI",
+    description: "- intelligently",
+    meta: "No 2.",
+    imageSrc:
+      "https://images.unsplash.com/photo-1470770841072-f978cf4d019e?q=80&w=1000&auto=format&fit=crop",
+    href: "/camera",
+  },
+  {
+    id: 3,
+    title: "Turn it into a ready-to-use 3D asset",
+    description: "— instantly",
+    meta: "No 3.",
+    imageSrc:
+      "https://images.unsplash.com/photo-1509316975850-ff9c5deb0cd9?q=80&w=1000&auto=format&fit=crop",
+    href: "/camera",
+  },
+]
+
+const FocusRailDemo = () => {
   return (
-    <div className="w-full bg-background">
-      <FinancialHero
-        title={
-          <>
-            Ready to Transform Your <br />
-            <span className="text-primary">Management?</span>
-          </>
-        }
-        description="Experience the future of finance with our cutting-edge SaaS platform. Start optimizing your financial operations today!"
-        buttonText="Open Camera"
-        buttonLink="/camera"
-        imageUrl1="https://images.unsplash.com/photo-1579965342575-16428a7c8881?auto=format&fit=crop&w=900&q=60"
-        imageUrl2="https://images.unsplash.com/photo-1664013263421-91e3a8101259?auto=format&fit=crop&w=900&q=60"
-      />
-    </div>
+    <main className="min-h-screen overflow-x-hidden w-full bg-neutral-950 flex flex-col items-center justify-center py-20">
+      <div className="mb-12 text-center">
+        <h1 className="text-4xl font-bold text-white mb-2">Ready to Change Your World?</h1>
+        <p className="text-neutral-400">Point your camera at anything.</p>
+      </div>
+
+      <FocusRail items={DEMO_ITEMS} autoPlay={false} loop={true} />
+    </main>
   )
 }
 
-export default FinancialHeroDemo
+export default FocusRailDemo

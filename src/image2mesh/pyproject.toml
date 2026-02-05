@@ -12,9 +12,9 @@ dependencies = [
   "fastapi>=0.110",
   "uvicorn>=0.27",
   "pillow>=10.0",
-  "numpy>=1.24",
+  "numpy>=1.24,<2",
   "python-multipart>=0.0.9",
-  "opencv-python>=4.8; platform_system != 'Darwin'", # optional on mac if not needed
+  "opencv-python>=4.8,<4.12; platform_system != 'Darwin'", # optional on mac if not needed
 ]
 
 [project.optional-dependencies]

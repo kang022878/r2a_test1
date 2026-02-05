@@ -416,3 +416,8 @@ def preview_file(preview_id: str):
     if not path.exists():
         raise HTTPException(status_code=404, detail="Preview not found")
     return FileResponse(path, media_type="model/gltf-binary", filename="model.glb")
+
+
+# Serve built frontend files (e.g., /image1.png, /vite.svg) without shadowing API routes.
+if WEB_DIST.exists():
+    app.mount("/", StaticFiles(directory=str(WEB_DIST), html=True), name="web")
