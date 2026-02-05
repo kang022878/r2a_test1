@@ -1,12 +1,16 @@
 """Ghibli Diffusion: Img2Img + Canny(구조) + Ghibli(화풍) + LCM + IP-Adapter + Seed. 배경/인물 유지·눈 묘사 강화."""
 
 import io
+import warnings
 from pathlib import Path
 
 import cv2
 import numpy as np
 import torch
 from PIL import Image
+
+# Suppress diffusers safety checker warning
+warnings.filterwarnings("ignore", message=".*safety_checker.*")
 
 from .base_engine import BaseStyleEngine
 

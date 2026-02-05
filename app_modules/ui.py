@@ -356,8 +356,11 @@ if (!previewId) {
       const maxDim = Math.max(size.x, size.y, size.z);
       const scale = 1.2 / (maxDim || 1);
       mesh.scale.setScalar(scale);
-      // Rotate to stand character upright and face camera
-      mesh.rotation.set(0, Math.PI, -Math.PI / 2);
+      // X축 -90도: 뒤로 누운 상태에서 세움
+      // Y축 +90도: 오른쪽 보던 것을 정면으로
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.rotation.z = -Math.PI / 2;
+
       scene.add(mesh);
     }, undefined, (e) => console.error('GLTF load error:', e));
 
